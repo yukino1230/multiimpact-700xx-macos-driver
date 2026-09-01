@@ -1,0 +1,5 @@
+#!/bin/sh
+# MultiImpact 700XX の状態を表示する(印刷はしない)
+#   mi700status            … キューから接続先を調べて問い合わせる
+#   mi700status 192.168.0.10
+exec /usr/local/libexec/cups/filter/rastertomi700 --status "$@"

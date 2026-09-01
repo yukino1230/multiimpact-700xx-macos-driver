@@ -1,0 +1,27 @@
+#!/bin/bash
+# MultiImpact 700XX のプリンタキューを登録する
+#   sudo mi700setup <プリンタのIP> [キュー名]
+#   sudo mi700setup --remove [キュー名]
+set -eu
+QUEUE_DEFAULT="MultiImpact700XX"
+PPD=/usr/local/share/mi700/MI700XX.ppd
+
+[ "$(id -u)" = "0" ] || { echo "sudo で実行してください"; exit 1; }
+if [ "${1:-}" = "--remove" ]; then
+  lpadmin -x "${2:-$QUEUE_DEFAULT}"; echo "削除しました: ${2:-$QUEUE_DEFAULT}"; exit 0
+fi
+IP="${1:-}"; QUEUE="${2:-$QUEUE_DEFAULT}"
+[ -n "$IP" ] || { echo "使い方: sudo mi700setup <プリンタのIP> [キュー名]"; exit 1; }
+
+# forms.conf を編集した場合だけ PPD を作り直す(python3 が無くても動くようにする)
+if command -v python3 >/dev/null 2>&1 && [ /usr/local/share/mi700/forms.conf -nt "$PPD" ]; then
+  echo "==> forms.conf が更新されているので PPD を再生成"
+  python3 /usr/local/share/mi700/mkppd.py > "$PPD"
+fi
+[ -f "$PPD" ] || { echo "PPD がありません: $PPD"; exit 1; }
+
+nc -z -G 3 -w 3 "$IP" 9100 2>/dev/null || echo "警告: $IP:9100 に接続できません(登録は続行)"
+lpadmin -p "$QUEUE" -E -v "socket://$IP:9100" -P "$PPD" \
+        -D "NEC MultiImpact 700XX" -L "LAN" -o printer-is-shared=false
+echo "完了しました。「設定」>「プリンタとスキャナ」に $QUEUE が出ます。"
+echo "  削除: sudo mi700setup --remove $QUEUE"

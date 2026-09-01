@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""印字位置の確認パターンを生成する (PostScript を標準出力へ)
+
+トラクタを動かしたときや印字位置が怪しいときに、用紙1枚で
+「ページの原点が用紙端から何mmの位置に来ているか」を実測できる。
+
+  mi700align Cont10x45 | pdf2mi700 --source rear --direction uni > /tmp/a.prn
+  mi700align --size 210x297 | pdf2mi700 --source cut --direction uni > /tmp/a.prn
+"""
+import os, sys
+
+CONF = ["/usr/local/share/mi700/forms.conf",
+        os.path.expanduser("~/Developer/mi700/forms.conf")]
+
+
+def forms():
+    out = {}
+    for c in CONF:
+        if not os.path.exists(c):
+            continue
+        for line in open(c, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            f = line.split("\t")
+            if len(f) >= 4:
+                out.setdefault(f[0], (f[1], float(f[2]), float(f[3])))
+    return out
+
+
+def main():
+    F = forms()
+    args = sys.argv[1:]
+    if not args:
+        print("用紙を指定してください。登録済み:", file=sys.stderr)
+        for k, (lbl, w, h) in sorted(F.items()):
+            print(f"  {k:<12} {lbl}  {w} x {h} mm", file=sys.stderr)
+        print("  または --size 幅x高さ (mm)", file=sys.stderr)
+        return 1
+    if args[0] == "--size":
+        w, h = (float(v) for v in args[1].lower().split("x"))
+        label = f"{w:g} x {h:g}mm"
+    elif args[0] in F:
+        _, w, h = F[args[0]]
+        # PostScript の標準フォントは日本語を出せないので ASCII のキー名を使う
+        label = f"{args[0]}  {w:g} x {h:g}mm"
+    else:
+        print(f"未登録の用紙: {args[0]}", file=sys.stderr)
+        return 1
+
+    # 用紙からはみ出す可能性があるので、目盛りは実寸より少し内側までにする
+    mx = int((w - 10) // 10)
+    my = int((h - 10) // 10)
+    ps = [f"""%!PS-Adobe-3.0
+<< /PageSize [{w*72/25.4:.0f} {h*72/25.4:.0f}] >> setpagedevice
+/mm {{ 72 mul 25.4 div }} def
+/T {{ {h*72/25.4:.0f} exch sub }} def
+/Helvetica findfont 8 scalefont setfont
+0.4 mm setlinewidth
+0 mm 0 mm T moveto 0 mm {min(h-8, my*10):g} mm T lineto stroke
+0 mm 0 mm T moveto {min(w-8, mx*10):g} mm 0 mm T lineto stroke
+/Helvetica-Bold findfont 8 scalefont setfont
+3 mm 5.5 mm T moveto (X=0  measure from paper LEFT edge) show
+gsave 5.5 mm 4 mm T translate 90 rotate 0 0 moveto (Y=0  from TOP edge) show grestore
+0.25 mm setlinewidth
+10 mm 0 mm T moveto 10 mm {min(h-8, my*10):g} mm T lineto stroke
+0.3 mm setlinewidth"""]
+    ps.append(f"0 1 {mx} {{ /i exch def i 10 mul mm 0 mm T moveto "
+              f"0 i 5 mod 0 eq {{ -6 mm }} {{ -3 mm }} ifelse rlineto stroke }} for")
+    ps.append(f"0 1 {mx//5} {{ /i exch def i 50 mul mm 2 add 9 mm T moveto "
+              f"i 50 mul 3 string cvs show }} for")
+    ps.append(f"0 1 {my} {{ /i exch def 0 mm i 10 mul mm T moveto "
+              f"i 5 mod 0 eq {{ 6 mm }} {{ 3 mm }} ifelse 0 rlineto stroke }} for")
+    ps.append(f"0 1 {my//5} {{ /i exch def 8 mm i 50 mul mm T 2 sub moveto "
+              f"i 50 mul 3 string cvs show }} for")
+    ps.append(f"""/Helvetica-Bold findfont 9 scalefont setfont
+20 mm {h/2:.0f} mm T moveto (MI700XX ALIGN CHECK) show
+/Helvetica findfont 8 scalefont setfont
+20 mm {h/2+6:.0f} mm T moveto ({label}  page origin = printable top-left) show
+20 mm {h/2+12:.0f} mm T moveto (ruler ticks every 10mm from page origin) show
+showpage""")
+    print("\n".join(ps))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

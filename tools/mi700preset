@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Windows のキャプチャ .prn をプリセットとして登録する
+
+使い方: mi700preset <キャプチャ.prn> <名前> [比較する既存プリセット名]
+        mi700preset --list
+登録後は pdf2mi700 --paper <名前> で使える。
+"""
+import os, shutil, subprocess, sys
+
+DIR = os.path.expanduser("~/Developer/mi700/presets")
+DRAW = (b"\x1bT", b"\x1bF", b"\x1bJ")
+
+
+def info(blob):
+    marks = [blob.find(m) for m in DRAW]
+    marks = [m for m in marks if m >= 0]
+    init = blob[:min(marks)] if marks else b""
+    tail = blob[blob.rfind(b"\x1bJ"):] if b"\x1bJ" in blob else b""
+    end = tail[tail.rfind(b"\x0d"):] if b"\x0d" in tail else b""
+    eject = end.lstrip(b"\x0d")
+    for s in (b"\x1bc8", b"\x1bc"):
+        if eject.endswith(s):
+            eject = eject[:-len(s)]; break
+    return init, eject, end
+
+
+def main():
+    os.makedirs(DIR, exist_ok=True)
+    if len(sys.argv) == 2 and sys.argv[1] == "--list":
+        for f in sorted(os.listdir(DIR)):
+            if f.endswith(".prn"):
+                i, e, _ = info(open(os.path.join(DIR, f), "rb").read())
+                print(f"  {f[:-4]:<28} 初期化 {len(i):>4}B  排紙 {e.hex()}")
+        return
+    if len(sys.argv) not in (3, 4):
+        sys.exit(__doc__)
+
+    src, name = sys.argv[1], sys.argv[2]
+    blob = open(src, "rb").read()
+    init, eject, end = info(blob)
+    if not init:
+        sys.exit("作画命令が見つかりません。700XX のキャプチャではない可能性があります")
+
+    dst = os.path.join(DIR, name + ".prn")
+    exists = os.path.exists(dst)
+    shutil.copy(src, dst)
+    print(f"  {'更新' if exists else '登録'}: {name}")
+    print(f"    初期化 {len(init)} バイト / 排紙 {eject.hex()} / 終了 {end.hex()}")
+    print(f"    使い方: pdf2mi700 --paper {name} file.pdf | lp -d MI700XX -o raw")
+
+    if len(sys.argv) == 4:
+        other = os.path.join(DIR, sys.argv[3] + ".prn")
+        if os.path.exists(other):
+            print(f"\n  === {sys.argv[3]} との差分 ===")
+            subprocess.run(["mi700diff", other, dst])
+
+
+if __name__ == "__main__":
+    main()

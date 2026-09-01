@@ -1,0 +1,9 @@
+# 生成物
+build/
+driver/rastertomi700.bin
+driver/MI700XX.ppd
+.DS_Store
+
+# キャプチャには実際に印刷した内容(第三者の住所など)が入りうるので公開しない
+presets/*.prn
+!presets/sheet.prn

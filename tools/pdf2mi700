@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""PDF/PS -> NEC MultiImpact 700XX (201PL) ビットイメージ変換
+
+実機ドライバの出力を解析して確定した仕様:
+  ESC J nnnn + データ  24ドットビットイメージ。1列3バイト、バイト内は LSB が上端
+  ESC F nnnn           横方向の絶対位置(ドット)
+  ESC T nn + LF        縦方向の紙送り。単位は 1/120 inch
+  ESC H + ESC e 11     F/J の直前に必要(純正ドライバに合わせる)
+  解像度               縦横とも 160dpi
+
+給紙口などの設定は ~/Developer/mi700/presets/<名前>.prn に Windows のキャプチャを
+置くだけで増やせる。初期化/排紙/終了処理はそこから自動抽出する。
+"""
+import argparse, os, subprocess, sys, tempfile
+
+PRESET_DIRS = ["/usr/local/share/mi700/presets",
+               os.path.expanduser("~/Developer/mi700/presets")]
+
+
+def preset_path(name):
+    for d in PRESET_DIRS:
+        p = os.path.join(d, name + ".prn")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def preset_names():
+    out = set()
+    for d in PRESET_DIRS:
+        if os.path.isdir(d):
+            out |= {f[:-4] for f in os.listdir(d) if f.endswith(".prn")}
+    return sorted(out)
+BAND = 24                      # 24ピン = 1バンド24ドット
+TDPI = 120                     # ESC T の単位は 1/120 inch
+DRAW = (b"\x1bT", b"\x1bF", b"\x1bJ")
+# 印字方向 (201PL リファレンス 2・4・15 / 700XX2 OM p185)
+DIRECTION = {"uni": b"\x1b>", "bi": b"\x1b]"}
+# 給紙口 (700XX2 OM p189-190)  1=フロントトラクタ 2=カット紙 3=リアトラクタ
+# feeder=シートフィーダ(自動吸入) guide=シートガイド(手差し) — どちらも ESC m2。
+# 違いは ESC a(全排出後全吸入) を送るかどうか。
+SOURCE = {"front": b"\x1bm1", "fronttractor": b"\x1bm1",
+          "feeder": b"\x1bm2", "guide": b"\x1bm2",
+          "rear": b"\x1bm3", "reartractor": b"\x1bm3"}
+CUT = ("feeder", "guide")
+FEEDER = ("feeder",)
+# 印刷品質 (Windows ドライバに合わせた): ESC d0=ドラフト設定 / d1=解除
+QUALITY = {"std-bi":   b"\x1bd1\x1b]", "std-uni":   b"\x1bd1\x1b>",
+           "draft-bi": b"\x1bd0\x1b]", "draft-uni": b"\x1bd0\x1b>",
+           "none":     b""}
+# カット紙の排出方向 (700XX2 OM p189)
+EJECT_DIR = {"front": b"\x1c02ER", "rear": b"\x1c02EF"}
+# 漢字コード表 (700XX2 OM p188)
+KANJI = {"1978": b"\x1c05F2-00", "1983": b"\x1c05F2-01", "1990": b"\x1c05F2-02"}
+LINE_INCH = 6                  # 簡易VFU の1行 = 1/6インチ
+CUT_EXTRA = 300                # カット紙の用紙長に足す分 (2.5インチ)。Windows キャプチャ由来
+
+
+def build_init(source, eject_dir, quality, form_lines, bottom, kanji):
+    """文書化された命令だけで初期化を組み立てる。
+    順序と同期点は Windows ドライバのキャプチャに合わせること。
+    ESC m(給紙口)は用紙の退避などの機械的動作を伴うため、直後に EM で同期しないと
+    後続の設定が動作中に届き、給紙後に停止する(SEL等が点滅する)。
+      品質 → 漢字表 → 拡大解除 → 給紙口 → EM → 排出方向 → 用紙長 → CR
+      → 吸入(ESC a) → EM → CR
+    工場設定と同じ値になる命令(ESC /136, ESC L000, ESC M など)は送らない。"""
+    out = bytearray()
+    out += QUALITY[quality]                     # ドラフト/標準 と 印字方向
+    out += KANJI[kanji]                         # 漢字コード表
+    out += b"\x1be11"                           # 拡大率を1倍に戻す
+    out += SOURCE[source]                       # 給紙口
+    out += b"\x19"                              # EM: 給紙口切替の完了を待つ
+    if source in CUT:
+        out += EJECT_DIR[eject_dir]             # 排出方向(カット紙のみ)
+        if form_lines:                          # カット紙の用紙長 (1/120インチ単位)
+            out += b"\x1c05v%04d" % form_lines
+    elif form_lines:                            # 連続紙は簡易VFU(行数)
+        body = b"%02d" % form_lines
+        if bottom:
+            body += b",%02d" % bottom
+        out += b"\x1bv" + body + b"."
+    out += b"\x0d"
+    if source == "feeder":
+        out += b"\x1ba"                         # 全排出後全吸入(シートフィーダ)
+    out += b"\x19\x0d"                          # EM: 給紙の完了を待つ
+    return bytes(out)
+
+
+def builtin_profile(source):
+    if source == "feeder":   # 排出して次の用紙を吸入
+        return {"eject": b"\x1ba", "trailer": b"\x0d\x1bb\x1bc8"}
+    if source == "guide":    # 手差しなので排出のみ
+        return {"eject": b"\x1bb", "trailer": b"\x0d\x1bb\x1bc8"}
+    return {"eject": b"\x0c", "trailer": b"\x0d\x0c\x1bc8"}
+
+
+def set_direction(init, mode):
+    """初期化中の印字方向指定を差し替える。無ければ末尾に足す。"""
+    if mode == "keep":
+        return init
+    want = DIRECTION[mode]
+    for cmd in DIRECTION.values():
+        i = init.find(cmd)
+        if i >= 0:
+            return init[:i] + want + init[i + 2:]
+    return init + want
+
+
+def load_preset(name):
+    """キャプチャ .prn から初期化・排紙・終了処理を抽出する"""
+    path = preset_path(name)
+    if path is None:
+        sys.exit(f"プリセット '{name}' がありません。利用可能: {', '.join(preset_names()) or 'なし'}\n"
+                 f"追加するには mi700preset <キャプチャ.prn> <名前>")
+    blob = open(path, "rb").read()
+
+    marks = [blob.find(m) for m in DRAW]
+    marks = [m for m in marks if m >= 0]
+    init = blob[:min(marks)] if marks else b""
+
+    tail = blob[blob.rfind(b"\x1bJ"):] if b"\x1bJ" in blob else blob
+    end = tail[tail.rfind(b"\x0d"):] if b"\x0d" in tail else b"\x0d\x0c\x1bc8"
+    eject = end.lstrip(b"\x0d")
+    for suffix in (b"\x1bc8", b"\x1bc"):          # 終了リセットを除いた残りが排紙
+        if eject.endswith(suffix):
+            eject = eject[:-len(suffix)]
+            break
+    return {"init": init, "eject": eject or b"\x0c", "trailer": end}
+
+
+def render(src, hdpi, vdpi, outdir):
+    """gs でラスタライズする。gs の出力は必ず捕捉すること。
+    継承したままだと gs のメッセージが変換結果(stdout)に混入して壊れる。"""
+    if not os.path.exists(src):
+        sys.exit(f"入力ファイルがありません: {src}")
+    pat = os.path.join(outdir, "p%04d.pbm")
+    r = subprocess.run(["gs", "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER",
+                        "-sDEVICE=pbmraw", f"-r{hdpi}x{vdpi}",
+                        f"-sOutputFile={pat}", src],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    for stream in (r.stdout, r.stderr):
+        for line in stream.decode("utf-8", "replace").splitlines():
+            if line.strip():
+                print(f"  gs: {line.strip()}", file=sys.stderr)
+    if r.returncode != 0:
+        sys.exit(f"ラスタライズに失敗しました (gs 終了コード {r.returncode}): {src}")
+    return sorted(os.path.join(outdir, f) for f in os.listdir(outdir) if f.endswith(".pbm"))
+
+
+def read_pbm(path):
+    data = open(path, "rb").read()
+    if not data.startswith(b"P4"):
+        raise ValueError(f"P4 形式ではありません: {path}")
+    fields, pos = [], 2
+    while len(fields) < 2:
+        while data[pos:pos+1].isspace():
+            pos += 1
+        if data[pos:pos+1] == b"#":
+            while data[pos:pos+1] not in (b"\n", b""):
+                pos += 1
+            continue
+        start = pos
+        while not data[pos:pos+1].isspace():
+            pos += 1
+        fields.append(int(data[start:pos]))
+    pos += 1
+    w, h = fields
+    return w, h, data[pos:], (w + 7) // 8
+
+
+def band_columns(raw, stride, w, h, top):
+    """1バンドを「1列3バイト」に変換。バイト内は LSB が上端。"""
+    cols = []
+    for x in range(w):
+        b0 = b1 = b2 = 0
+        for k in range(BAND):
+            y = top + k
+            if y >= h or not (raw[y * stride + (x >> 3)] >> (7 - (x & 7)) & 1):
+                continue
+            if   k < 8:  b0 |= 1 << k
+            elif k < 16: b1 |= 1 << (k - 8)
+            else:        b2 |= 1 << (k - 16)
+        cols.append(bytes((b0, b1, b2)))
+    return cols
+
+
+def feed(out, units):
+    """ESC T は2桁なので 99 単位ずつに分割。実際に送った量を返す。"""
+    done = 0
+    while units > 0:
+        n = min(units, 99)
+        out.write(b"\x1bT%02d\x0a" % n)
+        units -= n
+        done += n
+    return done
+
+
+def encode_page(raw, stride, w, h, out, vdpi):
+    """縦位置は絶対値で管理する。相対送りを積むと丸め誤差が溜まるため。"""
+    at = 0
+    for top in range(0, h, BAND):
+        cols = band_columns(raw, stride, w, h, top)
+        first = next((i for i, c in enumerate(cols) if c != b"\0\0\0"), None)
+        if first is None:
+            continue                                  # 空白バンドは送らない
+        last = max(i for i, c in enumerate(cols) if c != b"\0\0\0")
+        at += feed(out, round(top * TDPI / vdpi) - at)
+        out.write(b"\x1bH\x1be11")
+        out.write(b"\x1bF%04d" % first)
+        out.write(b"\x1bH\x1be11")
+        out.write(b"\x1bJ%04d" % (last - first + 1))
+        out.write(b"".join(cols[first:last + 1]))
+        out.write(b"\x0d")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="PDF/PS を NEC MultiImpact 700XX のビットイメージに変換")
+    ap.add_argument("src", help="入力 PDF または PS")
+    ap.add_argument("--source", choices=sorted(SOURCE), default="feeder",
+                    help="給紙口 feeder=シートフィーダ / guide=シートガイド(手差し) / "
+                         "rear=リアトラクタ / front=フロントトラクタ")
+    ap.add_argument("--eject", choices=sorted(EJECT_DIR), default="front",
+                    help="カット紙の排出方向 (シートフィーダ/シートガイドのときのみ)")
+    ap.add_argument("--quality", choices=sorted(QUALITY), default="std-bi",
+                    help="印刷品質 std-bi/std-uni/draft-bi/draft-uni/none")
+    ap.add_argument("--direction", choices=["bi", "uni", "keep"],
+                    help="(旧) 印字方向。--quality に読み替えます")
+    ap.add_argument("--kanji", choices=sorted(KANJI), default="1990",
+                    help="漢字コード表の年版")
+    ap.add_argument("--form-lines", type=int, metavar="N",
+                    help="用紙長を行数(1行=1/6インチ, 1〜99)で明示。既定はページ高さから算出")
+    ap.add_argument("--bottom", type=int, default=0, metavar="N",
+                    help="ボトム領域の行数。ミシン目前後の無印字領域(規格は25.4mm=6行)")
+    ap.add_argument("--no-form-length", action="store_true",
+                    help="用紙長を送らない(本体の設定に従う)")
+    ap.add_argument("--paper", metavar="NAME",
+                    help="キャプチャ由来のプリセットを使う(旧方式)")
+    ap.add_argument("--init", metavar="FILE",
+                    help="初期化を任意の .prn から抽出して差し替える")
+    ap.add_argument("--list", action="store_true", help="プリセット一覧を表示して終了")
+    ap.add_argument("--hdpi", type=int, default=160)
+    ap.add_argument("--vdpi", type=int, default=160)
+    args = ap.parse_args()
+    if args.direction:                          # 旧オプションの読み替え
+        args.quality = {"uni": "std-uni", "bi": "std-bi", "keep": "none"}[args.direction]
+
+    if args.list:
+        for n in preset_names():
+            pr = load_preset(n)
+            print(f"  {n:<24} 初期化 {len(pr['init'])}B / 排紙 {pr['eject'].hex()}")
+        return
+
+    out = sys.stdout.buffer
+    with tempfile.TemporaryDirectory() as tmp:
+        pages = render(args.src, args.hdpi, args.vdpi, tmp)
+        if not pages:
+            sys.exit("ページが生成されませんでした")
+
+        if args.paper or args.init:                       # 旧方式: キャプチャ流用
+            prof = load_preset(args.paper) if args.paper else builtin_profile(args.source)
+            init = (extract_init(open(args.init, "rb").read())
+                    if args.init else prof["init"])
+            init = set_direction(init, "uni" if "uni" in args.quality else "bi")
+            print(f"  方式: キャプチャ流用 ({args.init or args.paper}) / 品質 {args.quality}",
+                  file=sys.stderr)
+        else:                                             # 新方式: 文書化された命令のみ
+            prof = builtin_profile(args.source)
+            lines = None
+            if not args.no_form_length:
+                _, h, _, _ = read_pbm(pages[0])
+                if args.source in CUT:          # 1/120インチ単位 + 2.5インチ
+                    lines = round(h / args.vdpi * 120) + CUT_EXTRA
+                    if not 1 <= lines <= 9999:
+                        sys.exit(f"用紙長 {lines} は範囲外です")
+                else:                           # 行数(1行=1/6インチ)
+                    lines = args.form_lines or round(h / args.vdpi * LINE_INCH)
+                    if not 1 <= lines <= 99:
+                        sys.exit(f"用紙長 {lines} 行は範囲外です(1〜99)。--form-lines で指定してください")
+            init = build_init(args.source, args.eject, args.quality,
+                              lines, args.bottom, args.kanji)
+            desc = (f"用紙長 {lines}" + ("(1/120in)" if args.source in CUT else "行")) \
+                   if lines else "用紙長は本体設定"
+            print(f"  方式: 組み立て / 給紙口 {args.source} / 品質 {args.quality} / {desc}",
+                  file=sys.stderr)
+
+        out.write(init)
+        for i, page in enumerate(pages):
+            if i:
+                out.write(prof["eject"])
+            w, h, raw, stride = read_pbm(page)
+            print(f"  ページ{i+1}: {w}x{h} ドット", file=sys.stderr)
+            encode_page(raw, stride, w, h, out, args.vdpi)
+        out.write(prof["trailer"])
+
+
+if __name__ == "__main__":
+    main()

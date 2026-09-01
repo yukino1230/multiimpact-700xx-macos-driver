@@ -1,0 +1,149 @@
+#!/bin/bash
+# MultiImpact 700XX のキューの既定値を設定する。
+# 印刷ダイアログはキューの既定値で開くので、よく使う設定をここに入れておくと
+# 毎回選び直さずに済む(プリセットの「最後に使用した設定」に頼らない)。
+#
+#   mi700default                          … 現在の既定値と選べる値を表示
+#   sudo mi700default 給紙=リアトラクタ 品質=ドラフト
+#   sudo mi700default -p キュー名 用紙=Cont10x45 給紙=reartractor
+set -eu
+PPDDIR=/etc/cups/ppd
+QUEUE=""
+
+usage() {
+  cat <<'EOS'
+使い方:
+  mi700default [-p キュー名]                    現在の既定値と選べる値を表示
+  sudo mi700default [-p キュー名] 項目=値 ...   既定値を変更
+
+項目は 用紙 / 給紙 / 排出 / 品質 / ボトム(または PPD のキーワード)。
+値はキーワードでも表示名の一部でも指定できる。例:
+  sudo mi700default 給紙=リアトラクタ 排出=手前
+EOS
+}
+
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p|--printer) QUEUE="${2:-}"; shift 2 ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            ARGS+=("$1"); shift ;;
+  esac
+done
+
+# --- 700XX のキューを探す ---
+mi_queues() {
+  local f n
+  for f in "$PPDDIR"/*.ppd; do
+    [ -e "$f" ] || continue
+    if LC_ALL=C grep -q '^\*ModelName: "NEC MultiImpact 700XX"' "$f" 2>/dev/null; then
+      n="$(basename "$f")"; echo "${n%.ppd}"
+    fi
+  done
+}
+if [ -z "$QUEUE" ]; then
+  found="$(mi_queues || true)"
+  case "$(printf '%s' "$found" | grep -c . || true)" in
+    0) echo "MultiImpact 700XX のキューが見つかりません。先に mi700setup を実行してください。" >&2; exit 1 ;;
+    1) QUEUE="$found" ;;
+    *) echo "700XX のキューが複数あります。-p で選んでください:" >&2
+       printf '  %s\n' $found >&2; exit 1 ;;
+  esac
+fi
+PPD="$PPDDIR/$QUEUE.ppd"
+[ -f "$PPD" ] || { echo "キューがありません: $QUEUE" >&2; exit 1; }
+
+# --- PPD を解析して U/D/C レコードに落とす ---
+TBL="$(iconv -f SHIFT_JIS -t UTF-8 "$PPD" 2>/dev/null | awk '
+function split_label(head, arr,   s) {
+  s = index(head, "/")
+  if (s) { arr[1] = substr(head, 1, s-1); arr[2] = substr(head, s+1) }
+  else   { arr[1] = head;                 arr[2] = head }
+}
+/^\*OpenUI \*/ {
+  line = $0; sub(/^\*OpenUI \*/, "", line)
+  head = substr(line, 1, index(line, ":") - 1)
+  split_label(head, a); key = a[1]
+  print "U\t" key "\t" a[2]; inui = key; next
+}
+/^\*CloseUI/ { inui = ""; next }
+inui != "" && $0 ~ ("^\\*Default" inui ":") {
+  v = $0; sub(/^[^:]*:[ \t]*/, "", v); print "D\t" inui "\t" v; next
+}
+inui != "" && $0 ~ ("^\\*" inui "[ \t]") {
+  line = substr($0, length(inui) + 3)
+  head = substr(line, 1, index(line, ":") - 1)
+  split_label(head, a)
+  print "C\t" inui "\t" a[1] "\t" a[2]
+}')"
+
+get_default() { printf '%s\n' "$TBL" | awk -F'\t' -v k="$1" '$1=="D" && $2==k {print $3}'; }
+get_label()   { printf '%s\n' "$TBL" | awk -F'\t' -v k="$1" '$1=="U" && $2==k {print $3}'; }
+get_choices() { printf '%s\n' "$TBL" | awk -F'\t' -v k="$1" '$1=="C" && $2==k {print $3 "\t" $4}'; }
+has_key()     { printf '%s\n' "$TBL" | awk -F'\t' -v k="$1" '$1=="U" && $2==k {f=1} END{exit !f}'; }
+
+# 表示する項目(PageRegion は PageSize の写しなので出さない)
+SHOWN="PageSize InputSlot OutputBin OutputMode MI700Bottom"
+
+alias_key() {
+  case "$1" in
+    用紙|用紙サイズ) echo PageSize ;;
+    給紙|給紙口)     echo InputSlot ;;
+    排出|排紙|排出方向) echo OutputBin ;;
+    品質|印刷品質|印字品質) echo OutputMode ;;
+    ボトム|ボトム領域)  echo MI700Bottom ;;
+    解像度)          echo Resolution ;;
+    *)               echo "$1" ;;
+  esac
+}
+
+# 値をキーワードに解決する(キーワードそのもの > 表示名の部分一致)
+resolve_val() {   # $1=key $2=入力値
+  local key="$1" val="$2" hit
+  if get_choices "$key" | awk -F'\t' -v v="$val" '$1==v {f=1} END{exit !f}'; then
+    echo "$val"; return 0
+  fi
+  hit="$(get_choices "$key" | awk -F'\t' -v v="$val" 'index($2,v) {print $1}')"
+  case "$(printf '%s' "$hit" | grep -c . || true)" in
+    1) echo "$hit"; return 0 ;;
+    0) echo "「$val」は $(get_label "$key") の値にありません" >&2 ;;
+    *) echo "「$val」は $(get_label "$key") の複数の値に一致します: $(echo $hit)" >&2 ;;
+  esac
+  return 1
+}
+
+show() {
+  echo "キュー: $QUEUE"
+  local k cur
+  for k in $SHOWN; do
+    has_key "$k" || continue
+    cur="$(get_default "$k")"
+    echo
+    echo "$(get_label "$k")  [$k]"
+    get_choices "$k" | while IFS="$(printf '\t')" read -r c l; do
+      if [ "$c" = "$cur" ]; then echo "  ● $l  ($c)"; else echo "    $l  ($c)"; fi
+    done
+  done
+  echo
+  echo "変更するには: sudo mi700default 給紙=リアトラクタ のように指定します。"
+}
+
+if [ "${#ARGS[@]}" -eq 0 ]; then show; exit 0; fi
+
+[ "$(id -u)" = "0" ] || { echo "変更には sudo が必要です。" >&2; exit 1; }
+
+OPTS=()
+for a in "${ARGS[@]}"; do
+  case "$a" in
+    *=*) ;;
+    *) echo "項目=値 の形で指定してください: $a" >&2; exit 1 ;;
+  esac
+  k="$(alias_key "${a%%=*}")"; v="${a#*=}"
+  has_key "$k" || { echo "そんな項目はありません: ${a%%=*}" >&2; exit 1; }
+  v="$(resolve_val "$k" "$v")" || exit 1
+  OPTS+=(-o "$k=$v")
+  echo "$(get_label "$k") → $(get_choices "$k" | awk -F'\t' -v c="$v" '$1==c{print $2}') ($v)"
+done
+
+lpadmin -p "$QUEUE" "${OPTS[@]}"
+echo "既定値を変更しました。印刷ダイアログを開き直すと反映されます。"

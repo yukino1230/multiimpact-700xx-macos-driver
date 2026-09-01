@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""CUPS フィルタ: CUPS ラスタ -> NEC MultiImpact 700XX (201PL)
+
+PDF のラスタライズは macOS 標準の cgpdftoraster が行うため、
+このフィルタに外部依存はない（Python3 のみ）。
+
+制御コードの出典:
+  ESC J nnnn + データ  24ドットビットイメージ。1列3バイト、バイト内は LSB が上端
+  ESC F nnnn           横方向の絶対位置。1ドット = 1/160 インチ
+  ESC T nn + LF        縦方向の紙送り。1単位 = 1/120 インチ
+  ESC m 1/2/3          給紙口 (前トラクタ / カット紙 / 後トラクタ)
+  FS 02ER / FS 02EF    カット紙の排出方向 (手前 / 奥)
+  ESC > / ESC ]        片方向 / 両方向印字
+  ESC v NN[,BB].       用紙長(行数, 1行=1/6インチ) とボトム領域
+  FS 05F 2-nn          漢字コード表 (00=1978 / 01=1983 / 02=1990)
+  ESC e 11             文字拡大を1倍に戻す(拡大中はドット間隔も拡大されるため)
+  ESC c 8              パラメータリセット
+"""
+import struct, sys
+
+BAND = 24                      # 24ピン
+TDPI = 120                     # ESC T の単位 1/120 inch
+LINE_INCH = 6                  # 簡易VFU の1行 = 1/6 inch
+DIRECTION = {"uni": b"\x1b>", "bi": b"\x1b]"}
+SOURCE = {"front": b"\x1bm1", "cut": b"\x1bm2", "rear": b"\x1bm3"}
+EJECT_DIR = {"front": b"\x1c02ER", "rear": b"\x1c02EF"}
+KANJI = {"1978": b"\x1c05F2-00", "1983": b"\x1c05F2-01", "1990": b"\x1c05F2-02"}
+HDR = 1796                     # cups_page_header2_t のサイズ
+
+
+def log(level, msg):
+    print(f"{level}: [rastertomi700] {msg}", file=sys.stderr)
+
+
+def build_init(source, eject_dir, direction, form_lines, bottom, kanji):
+    out = bytearray()
+    out += SOURCE[source]
+    if source == "cut":
+        out += EJECT_DIR[eject_dir]
+    if direction in DIRECTION:
+        out += DIRECTION[direction]
+    if form_lines:
+        body = b"%02d" % form_lines
+        if bottom:
+            body += b",%02d" % bottom
+        out += b"\x1bv" + body + b"."
+    out += KANJI[kanji]
+    out += b"\x1be11"
+    out += b"\x19"                                  # EM 同期コード
+    return bytes(out)
+
+
+def feed(out, units):
+    """ESC T は2桁なので 99 単位ずつに分割。実際に送った量を返す。"""
+    done = 0
+    while units > 0:
+        n = min(units, 99)
+        out.write(b"\x1bT%02d\x0a" % n)
+        units -= n
+        done += n
+    return done
+
+
+def encode_page(rows, w, h, stride, out, vdpi, invert):
+    """縦位置は絶対値で管理する(相対送りを積むと丸め誤差が溜まる)"""
+    at = 0
+    for top in range(0, h, BAND):
+        cols = []
+        for x in range(w):
+            b0 = b1 = b2 = 0
+            byte, mask = x >> 3, 1 << (7 - (x & 7))
+            for k in range(BAND):
+                y = top + k
+                if y >= h:
+                    continue
+                bit = rows[y * stride + byte] & mask
+                if invert:
+                    bit = not bit
+                if not bit:
+                    continue
+                if   k < 8:  b0 |= 1 << k           # バイト内は LSB が上端
+                elif k < 16: b1 |= 1 << (k - 8)
+                else:        b2 |= 1 << (k - 16)
+            cols.append(bytes((b0, b1, b2)))
+        first = next((i for i, c in enumerate(cols) if c != b"\0\0\0"), None)
+        if first is None:
+            continue                                 # 空白バンドは送らない
+        last = max(i for i, c in enumerate(cols) if c != b"\0\0\0")
+        at += feed(out, round(top * TDPI / vdpi) - at)
+        out.write(b"\x1bH\x1be11")
+        out.write(b"\x1bF%04d" % first)
+        out.write(b"\x1bH\x1be11")
+        out.write(b"\x1bJ%04d" % (last - first + 1))
+        out.write(b"".join(cols[first:last + 1]))
+        out.write(b"\x0d")
+
+
+def read_exact(fh, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = fh.read(n - len(buf))
+        if not chunk:
+            return buf
+        buf += chunk
+    return buf
+
+
+def unrle(fh, stride, height, bpp):
+    """CUPS ラスタ v2 の RLE を展開する(v3 は無圧縮なので通常は使わない)"""
+    px = max(1, (bpp + 7) // 8)
+    out = bytearray()
+    y = 0
+    while y < height:
+        rep = fh.read(1)
+        if not rep:
+            break
+        rep = rep[0] + 1
+        line = bytearray()
+        while len(line) < stride:
+            c = fh.read(1)
+            if not c:
+                break
+            c = c[0]
+            if c < 128:
+                line += fh.read(px) * (c + 1)
+            else:
+                line += fh.read(px * (257 - c))
+        line = bytes(line[:stride]).ljust(stride, b"\0")
+        for _ in range(min(rep, height - y)):
+            out += line
+            y += 1
+    return bytes(out)
+
+
+def main():
+    if len(sys.argv) < 6:
+        log("ERROR", "引数が足りません")
+        return 1
+    copies = max(1, int(sys.argv[4] or 1))
+    opts = dict(kv.split("=", 1) for kv in sys.argv[5].split() if "=" in kv)
+    source    = opts.get("MI700Source", "cut")
+    eject     = opts.get("MI700Eject", "front")
+    direction = opts.get("MI700Direction", "bi")
+    bottom    = int(opts.get("MI700Bottom", "0") or 0)
+    kanji     = opts.get("MI700Kanji", "1990")
+    if source not in SOURCE:    source = "cut"
+    if eject not in EJECT_DIR:  eject = "front"
+    if kanji not in KANJI:      kanji = "1990"
+
+    fh = open(sys.argv[6], "rb") if len(sys.argv) > 6 else sys.stdin.buffer
+    magic = fh.read(4)
+    if magic not in (b"RaS2", b"2SaR", b"RaS3", b"3SaR"):
+        log("ERROR", f"CUPS ラスタではありません: {magic!r}")
+        return 1
+    little = magic in (b"2SaR", b"3SaR")
+    compressed = magic in (b"RaS2", b"2SaR")
+    fmt = "<I" if little else ">I"
+
+    out = sys.stdout.buffer
+    pages = 0
+    while True:
+        h = read_exact(fh, HDR)
+        if len(h) < HDR:
+            break
+        def u(off): return struct.unpack_from(fmt, h, off)[0]
+        hdpi, vdpi = u(276), u(280)
+        w, ht      = u(372), u(376)
+        bpp        = u(388)
+        stride     = u(392)
+        cspace     = u(400)
+        if bpp != 1:
+            log("ERROR", f"1bit 以外は非対応です (cupsBitsPerPixel={bpp})")
+            return 1
+        invert = (cspace == 0)                       # 0=W は 1 が白
+        data = unrle(fh, stride, ht, bpp) if compressed else read_exact(fh, stride * ht)
+        if len(data) < stride * ht:
+            data = data.ljust(stride * ht, b"\0")
+
+        if pages == 0:
+            lines = None
+            if source in ("front", "rear"):
+                lines = round(ht / vdpi * LINE_INCH)
+                if not 1 <= lines <= 99:
+                    log("WARNING", f"用紙長 {lines} 行は範囲外のため送りません")
+                    lines = None
+            out.write(build_init(source, eject, direction, lines, bottom, kanji))
+            log("DEBUG", f"source={source} eject={eject} direction={direction} "
+                         f"bottom={bottom} {hdpi}x{vdpi}dpi form_lines={lines}")
+        else:
+            out.write(b"\x1bb" if source == "cut" else b"\x0c")
+        log("DEBUG", f"ページ{pages+1}: {w}x{ht} ドット")
+        encode_page(data, w, ht, stride, out, vdpi, invert)
+        pages += 1
+
+    if pages == 0:
+        log("ERROR", "ページがありません")
+        return 1
+    out.write(b"\x0d\x1bb\x1bc8" if source == "cut" else b"\x0d\x0c\x1bc8")
+    out.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

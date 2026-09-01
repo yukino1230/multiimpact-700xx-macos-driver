@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""CUPS フィルタ: PDF -> NEC MultiImpact 700XX
+
+CUPS からの引数: job-id user title copies options [filename]
+filename が無ければ stdin から読む。変換本体は pdf2mi700 に委譲する。
+"""
+import os, subprocess, sys, tempfile
+
+CONV = os.environ.get("MI700_CONV", "/usr/local/bin/pdf2mi700")
+
+
+def log(level, msg):
+    print(f"{level}: [pdftomi700] {msg}", file=sys.stderr)
+
+
+def main():
+    if len(sys.argv) < 6:
+        log("ERROR", "引数が足りません")
+        return 1
+    copies = max(1, int(sys.argv[4] or 1))
+    opts = dict(kv.split("=", 1) for kv in sys.argv[5].split() if "=" in kv)
+    source    = opts.get("MI700Source", "cut")
+    eject     = opts.get("MI700Eject", "front")
+    direction = opts.get("MI700Direction", "bi")
+    bottom    = opts.get("MI700Bottom", "0")
+    log("DEBUG", f"source={source} eject={eject} direction={direction} "
+                 f"bottom={bottom} copies={copies}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "job.pdf")
+        try:
+            if len(sys.argv) > 6:
+                with open(sys.argv[6], "rb") as f, open(src, "wb") as o:
+                    o.write(f.read())
+            else:
+                with open(src, "wb") as o:
+                    o.write(sys.stdin.buffer.read())
+        except OSError as e:
+            log("ERROR", f"入力を読めません: {e}")
+            return 1
+        if os.path.getsize(src) == 0:
+            log("ERROR", "入力が空です")
+            return 1
+
+        cmd = [CONV, "--source", source, "--eject", eject,
+               "--direction", direction, "--bottom", bottom, src]
+        try:
+            r = subprocess.run(cmd, capture_output=True)
+        except FileNotFoundError:
+            log("ERROR", f"{CONV} が見つかりません")
+            return 1
+        for line in r.stderr.decode("utf-8", "replace").splitlines():
+            if line.strip():
+                log("DEBUG", line.strip())
+        if r.returncode != 0:
+            log("ERROR", f"変換に失敗しました (終了コード {r.returncode})")
+            return 1
+        if not r.stdout:
+            log("ERROR", "変換結果が空です")   # 空データをプリンタに送らない
+            return 1
+
+        out = sys.stdout.buffer
+        for _ in range(copies):          # PPD で cupsManualCopies True にしてある
+            out.write(r.stdout)
+        out.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

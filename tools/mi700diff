@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""2つの .prn キャプチャを命令単位で比較する
+
+使い方: mi700diff a.prn b.prn
+Windows 側で設定を1つだけ変えて採った2つを渡すと、その設定に対応する
+制御コードが差分として出る。
+"""
+import difflib, sys
+
+DRAW = (b"\x1bT", b"\x1bF", b"\x1bJ")
+CTRL = {0x0a: "LF", 0x0d: "CR", 0x0c: "FF", 0x18: "CAN",
+        0x0f: "SI", 0x19: "EM", 0x00: "NUL"}
+
+
+def tokenize(b):
+    """初期化部を人間が読める命令列に分解する"""
+    toks, i = [], 0
+    while i < len(b):
+        c = b[i]
+        if c == 0x1b and i + 1 < len(b):                    # ESC
+            cmd = chr(b[i+1]); i += 2
+            arg = ""
+            while i < len(b) and 0x30 <= b[i] <= 0x39:
+                arg += chr(b[i]); i += 1
+            toks.append(f"ESC {cmd}{' ' + arg if arg else ''}")
+        elif c == 0x1c and i + 1 < len(b):                  # FS
+            if b[i+1:i+3].isdigit():                        # FS <長さ2桁> <本体>
+                n = int(b[i+1:i+3]); body = b[i+3:i+3+n].decode("latin1")
+                toks.append(f"FS [{n:02d}] {body}")
+                i += 3 + n
+            else:
+                cmd = chr(b[i+1]); i += 2
+                arg = ""
+                while i < len(b) and b[i] not in (0x1b, 0x1c) and b[i] >= 0x20:
+                    arg += chr(b[i]); i += 1
+                    if arg.endswith("."):
+                        break
+                toks.append(f"FS {cmd}{' ' + arg if arg else ''}")
+        else:
+            toks.append(CTRL.get(c, f"<{c:02x}>")); i += 1
+    return toks
+
+
+def split(blob):
+    marks = [blob.find(m) for m in DRAW]
+    marks = [m for m in marks if m >= 0]
+    init = blob[:min(marks)] if marks else blob
+    tail = blob[blob.rfind(b"\x1bJ"):] if b"\x1bJ" in blob else b""
+    end = tail[tail.rfind(b"\x0d"):] if b"\x0d" in tail else b""
+    return init, end
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    a, b = (open(p, "rb").read() for p in sys.argv[1:3])
+    na, nb = (p.split("/")[-1] for p in sys.argv[1:3])
+    ia, ea = split(a)
+    ib, eb = split(b)
+
+    print(f"  A = {na}  ({len(a)} bytes, 初期化 {len(ia)}B)")
+    print(f"  B = {nb}  ({len(b)} bytes, 初期化 {len(ib)}B)\n")
+
+    ta, tb = tokenize(ia), tokenize(ib)
+    diff = [l for l in difflib.unified_diff(ta, tb, "A", "B", lineterm="", n=1)]
+    if len(diff) <= 2:
+        print("  初期化: 差分なし")
+    else:
+        print("  初期化の差分 (- が A / + が B):")
+        for l in diff[2:]:
+            mark = "  " if l.startswith(" ") else "★"
+            print(f"   {mark}{l}")
+
+    print()
+    if ea == eb:
+        print(f"  終了処理: 同一  {ea.hex()}")
+    else:
+        print("  終了処理の差分:")
+        print(f"   ★A: {ea.hex()}  {' '.join(tokenize(ea))}")
+        print(f"   ★B: {eb.hex()}  {' '.join(tokenize(eb))}")
+
+
+if __name__ == "__main__":
+    main()

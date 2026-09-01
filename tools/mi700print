@@ -1,0 +1,74 @@
+#!/usr/bin/perl
+# NEC MultiImpact 700XX (201PL) 用テキスト送信フィルタ
+#   UTF-8(stdin) -> PR201 バイト列(stdout)
+#   日本語は ESC K <JIS> ESC H / 改行 CR+LF / 末尾 FF
+# 使い方: mi700print [-w 桁数] [-n] < in.txt | lp -d MI700XX -o raw
+use strict; use warnings;
+use Encode qw(decode encode);
+
+my $width = 80;
+my $ff    = 1;
+while (@ARGV) {
+    my $a = shift @ARGV;
+    if    ($a eq '-w') { $width = shift @ARGV }
+    elsif ($a eq '-n') { $ff = 0 }
+    else { die "usage: mi700print [-w cols] [-n]\n" }
+}
+
+# CP932 と JIS X 0208 で割り当てが食い違う文字を正規化
+my %FIX = (
+    "\x{FF5E}" => "\x{301C}",  # ～ 全角チルダ -> 波ダッシュ
+    "\x{FF0D}" => "\x{2212}",  # － 全角ハイフン -> マイナス記号
+    "\x{FFE3}" => "\x{FFE3}",  # ￣
+    "\x{2225}" => "\x{2016}",  # ∥ -> 双柱
+    "\x{FF0F}" => "\x{FF0F}",  # ／
+);
+
+my $GETA = "\x22\x2e";         # 〓 変換不能時の2バイト代替
+
+sub jis_char {                 # 1文字 -> JIS 2バイト(必ず2バイト)
+    my ($c) = @_;
+    $c = $FIX{$c} if exists $FIX{$c};
+    my $j = eval {
+        my $t = encode('iso-2022-jp', $c, Encode::FB_CROAK());
+        $t =~ s/\x1b\$[B\@]//g; $t =~ s/\x1b\([BJ]//g; $t;
+    };
+    return $GETA if !defined $j || length($j) != 2;
+    return $j;
+}
+
+sub enc_line {                 # 1行 -> PR201 バイト列
+    my ($line) = @_;
+    my ($out, $in_kanji) = ('', 0);
+    for my $c (split //, $line) {
+        if ($c =~ /[\x00-\x7f]/) {
+            $out .= "\x1bH" if $in_kanji; $in_kanji = 0;
+            $out .= $c;
+        } else {
+            $out .= "\x1bK" unless $in_kanji; $in_kanji = 1;
+            $out .= jis_char($c);
+        }
+    }
+    $out .= "\x1bH" if $in_kanji;
+    return $out;
+}
+
+binmode(STDOUT);
+my $text = decode('UTF-8', do { local $/; <STDIN> });
+$text =~ s/\n\z//;
+
+for my $line (split /\n/, $text, -1) {
+    $line =~ s/\r$//;
+    while (1) {
+        my ($chunk, $cols) = ('', 0);
+        while (length $line) {
+            my $c = substr($line, 0, 1);
+            my $w = ($c =~ /[\x00-\x7f]/) ? 1 : 2;
+            last if $cols + $w > $width;
+            $chunk .= $c; $cols += $w; substr($line, 0, 1) = '';
+        }
+        print enc_line($chunk), "\r\n";
+        last unless length $line;
+    }
+}
+print "\x0c" if $ff;

@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""700XX の .prn を解釈して PBM 画像に戻す(検証用)"""
+import sys
+data = open(sys.argv[1], "rb").read()
+W = 2560
+TDPI, VDPI = 120, 160        # ESC T は 1/120 inch、ラスタは 1/180 inch
+rows, y, x, i = {}, 0, 0, 0   # x の初期化が無いと ESC F 無しのデータで落ちる
+while i < len(data):
+    if data[i:i+2] == b"\x1bF" and data[i+2:i+6].isdigit():
+        x = int(data[i+2:i+6]); i += 6
+    elif data[i:i+2] == b"\x1bJ" and data[i+2:i+6].isdigit():
+        n = int(data[i+2:i+6]); i += 6
+        blk = data[i:i+n*3]; i += n*3
+        for c in range(n):
+            b0, b1, b2 = blk[c*3:c*3+3]
+            bits = (b0 << 16) | (b1 << 8) | b2
+            for k in range(24):
+                if bits >> ((2 - k // 8) * 8 + k % 8) & 1:
+                    rows.setdefault(y + k, set()).add(x + c)
+    elif data[i:i+2] == b"\x1bT" and data[i+2:i+4].isdigit():
+        y += round(int(data[i+2:i+4]) * VDPI / TDPI); i += 4
+    elif data[i:i+1] in (b"\x0c",):
+        i += 1
+    else:
+        i += 1
+H = (max(rows) + 2) if rows else 1
+stride = (W + 7) // 8
+buf = bytearray(stride * H)
+for yy, xs in rows.items():
+    for xx in xs:
+        if 0 <= xx < W:
+            buf[yy * stride + (xx >> 3)] |= 1 << (7 - (xx & 7))
+sys.stdout.buffer.write(b"P4\n%d %d\n" % (W, H))
+sys.stdout.buffer.write(bytes(buf))
