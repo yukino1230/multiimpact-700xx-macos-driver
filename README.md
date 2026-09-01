@@ -112,12 +112,20 @@ snmpset -v1 -c public <IP> 1.3.6.1.2.1.1.6.0 s "事務所"
 
 ## インストール
 
+ビルド済みのパッケージを同梱しているので、そのまま入れられます。
+
 ```bash
-git clone <このリポジトリ>
-cd mi700
-./driver/build-pkg.sh 1.0
-sudo installer -pkg build/mi700-1.0.pkg -target /
+git clone https://github.com/yukino1230/multiimpact-700xx-macos-driver.git
+cd multiimpact-700xx-macos-driver
+sudo installer -pkg dist/mi700-3.0.pkg -target /
 sudo mi700setup <プリンタのIP>
+```
+
+自分でビルドする場合はこうです（`forms.conf` を編集したときもこちら）。
+
+```bash
+./driver/build-pkg.sh 3.0
+sudo installer -pkg build/mi700-3.0.pkg -target /
 ```
 
 `mi700setup` が `socket://<IP>:9100` のキューを作ります。
