@@ -218,6 +218,100 @@ sudo mi700setup <IP> <キュー名>     # forms.conf が新しければ PPD を�
 mi700align Cont10x11 > a.ps      # 10mm 刻みの目盛りパターン
 ```
 
+## 付属コマンド
+
+いずれもパッケージに含まれ、`/usr/local/bin` に入ります。
+普段の印刷は印刷ダイアログで済むので、ここにあるのは**検証と調整のための道具**です。
+
+### mi700print — テキストをそのまま印刷する
+
+UTF-8 のテキストを 201PL に変換します。CUPS を通さないので、ラスタ化を挟まず
+プリンタ内蔵フォントで印字されます。速く、罫線のズレも出ません。
+
+```bash
+echo "見積書" | mi700print | lp -d <キュー名> -o raw
+mi700print -w 100 < memo.txt | lp -d <キュー名> -o raw
+```
+
+| | |
+|---|---|
+| `-w 桁数` | 折り返し桁数（既定 80） |
+| `-n` | 末尾の FF を送らない |
+
+日本語は `ESC K` + JIS で送り、改行は CR+LF、ページ末尾に FF を付けます。
+**変換できない文字は必ず2バイトの `〓` に落とします**。1バイトの `?` にすると
+そこから先の漢字ストリームが全部ずれます。`～` `－` `∥` は CP932 と JIS X 0208 で
+割り当てが違うので正規化しますが、**`￥` は JIS 216F に直接あるので正規化しません**。
+
+### pdf2mi700 — CUPS を通さずに PDF/PS を変換する
+
+ドライバを入れなくても使える旧経路です。ラスタ化に Ghostscript が要ります。
+
+```bash
+pdf2mi700 --source rear --quality std-uni doc.pdf > out.prn
+lp -d <キュー名> -o raw out.prn
+```
+
+| | |
+|---|---|
+| `--source` | `feeder` / `guide` / `reartractor` / `fronttractor` |
+| `--eject` | `front` / `rear`（カット紙のみ） |
+| `--quality` | `std-bi` / `std-uni` / `draft-bi` / `draft-uni` / `none` |
+| `--form-lines N` | 用紙長を行数で明示（既定はページ高さから算出） |
+| `--bottom N` | ボトム領域の行数（規格の 25.4mm は 6行） |
+| `--no-form-length` | 用紙長を送らず本体の設定に従う |
+| `--paper NAME` | 登録済みプリセットの初期化列を使う |
+| `--list` | プリセット一覧 |
+
+### mi700decode — .prn を画像に戻す
+
+**紙を使わずに出力を検証できます。** PBM を標準出力に吐くので、`sips` で PNG にできます。
+
+```bash
+mi700decode out.prn > out.pbm
+sips -s format png out.pbm --out out.png
+```
+
+座標系が Windows ドライバと一致することを証明したのもこれです。実機で正しく印字できた
+キャプチャをデコードし、こちらのドライバに通し直して、同じ座標にドットが来るか比べました。
+
+### mi700align — 印字位置を実測する
+
+用紙1枚で「ページの原点が用紙端から何mmか」を測るための、10mm 刻みの目盛りパターンです。
+**トラクタを動かしたら測り直してください。**
+
+```bash
+mi700align                       # 登録済み用紙の一覧
+mi700align Cont10x11 > a.ps      # 用紙名を指定
+mi700align --size 210x297 > a.ps # 実寸を直接指定(mm)
+```
+
+PostScript を出すので、CUPS 経由で印刷するなら PDF に変換してから `lp` に渡します。
+
+> **落とし穴:** Ghostscript に渡すファイル名を `align.ps` にしないでください。
+> gs は自分のライブラリを先に探すので、**同名の gs 付属の `align.ps` を拾います**。
+
+### mi700diff — キャプチャを命令単位で比較する
+
+```bash
+mi700diff a.prn b.prn
+```
+
+Windows 側で**設定を1つだけ変えて**採った2つを渡すと、その設定に対応する制御コードが
+差分として出ます。給紙口や排紙方向のコードはこの方法で割り出しました。
+
+### mi700preset — キャプチャをプリセットに登録する
+
+```bash
+mi700preset capture.prn rear     # 登録
+mi700preset --list               # 一覧
+```
+
+登録すると `pdf2mi700 --paper <名前>` で初期化列を再利用できます。
+
+> `.prn` は Windows 側でプリンタのポートを `FILE:` に変えて印刷すると採れます。
+> **実際に印刷した内容がそのまま入るので、公開する前に `mi700decode` で中身を確認してください。**
+
 ## 実機で検証したこと
 
 Windows ドライバが出力したデータを `FILE:` ポートで吸い出し、それと突き合わせて確定させました。
@@ -279,7 +373,10 @@ tools/pdf2mi700          PDF/PS を Ghostscript 経由で変換する（CUPS を
 tools/mi700decode        .prn を PBM に戻す（紙を使わずに検証できる）
 tools/mi700align         印字位置の確認パターンを作る
 tools/mi700diff          キャプチャ同士を比較する
+tools/mi700preset        キャプチャをプリセットとして登録する
 ```
+
+`tools/` の使い方は[付属コマンド](#付属コマンド)にあります。
 
 PPD は `*LanguageEncoding: JIS83-RKSJ`、つまり **Shift-JIS** で出力します。
 UTF-8 にすると印刷ダイアログの表示が文字化けします。
