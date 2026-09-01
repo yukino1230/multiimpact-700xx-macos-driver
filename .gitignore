@@ -7,3 +7,6 @@ driver/MI700XX.ppd
 # キャプチャには実際に印刷した内容(第三者の住所など)が入りうるので公開しない
 presets/*.prn
 !presets/sheet.prn
+
+# 配布物(dist/)は追跡する。build/ は中間生成物なので除外したまま
+!dist/
