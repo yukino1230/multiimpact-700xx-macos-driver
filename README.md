@@ -203,6 +203,24 @@ sudo mi700setup <プリンタのIP>
 sudo installer -pkg build/mi700-3.0.pkg -target /
 ```
 
+### 署名と公証（配布する人向け）
+
+`build-pkg.sh` は **Developer ID 証明書があれば自動で署名します**。無ければ未署名のまま
+作られるだけで、ビルドは失敗しません。自分で使うぶんには署名は要りません。
+
+公証まで通すには、`notarytool` の資格情報を一度キーチェーンに入れておきます。
+
+```bash
+xcrun notarytool store-credentials mi700 --apple-id <Apple ID> --team-id <Team ID>
+MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.0
+```
+
+フィルタを Hardened Runtime 付きで署名 → pkg を署名 → 公証 → `stapler staple` まで行います。
+証明書を明示したい場合は `MI700_SIGN_APP` / `MI700_SIGN_PKG` で指定できます。
+
+なお **`git clone` してビルドしたパッケージは、署名がなくても Gatekeeper に止められません。**
+quarantine 属性が付くのはブラウザでダウンロードしたファイルだけだからです。
+
 `mi700setup` が `socket://<IP>:9100` のキューを作ります。
 「設定」→「プリンタとスキャナ」から追加しても構いません。PPD は
 `/Library/Printers/PPDs/Contents/Resources/` に入るので、IP を入れれば
