@@ -226,9 +226,13 @@ quarantine 属性が付くのはブラウザでダウンロードしたファイ
 `/Library/Printers/PPDs/Contents/Resources/` に入るので、IP を入れれば
 SNMP の機種名（`hrDeviceDescr`）と突き合わせて**ドライバが自動選択されます**。
 
-パッケージは署名していません。ダウンロードしたものをダブルクリックすると
-Gatekeeper に止められるので、右クリック →「開く」か、上のように
-`sudo installer` をターミナルから実行してください。
+パッケージは **Developer ID で署名し、Apple の公証も通してあります**。
+ダウンロードしてダブルクリックするだけで入ります。確かめたい場合は:
+
+```bash
+spctl -a -vvv -t install mi700-3.0.pkg
+# accepted / source=Notarized Developer ID と出れば正常です
+```
 
 削除は `sudo mi700setup --remove <キュー名>` です。
 
