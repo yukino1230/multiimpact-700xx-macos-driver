@@ -36,6 +36,7 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
 |---|---|
 | 検証済み | **macOS 26.6.2**（Apple Silicon） |
 | たぶん動く | macOS 11 以降（**未検証**） |
+| macOS 27.0 | ドライバ・キュー・PPD は**アップグレード後も残っていました**。ただし CUPS の Web 設定は無効化されています（下記） |
 
 フィルタは arm64 と x86_64 のユニバーサルバイナリとしてビルドされます。
 ビルドには **Xcode Command Line Tools**（`clang`）と **python3** が要ります。
@@ -285,9 +286,14 @@ mi700default                                    # 現在の既定値と選べる
 sudo mi700default 給紙=リアトラクタ 用紙=Cont10x45
 ```
 
-#### ブラウザから設定する
+#### ブラウザから設定する（macOS 26 まで）
 
-CUPS の管理画面でも同じことができます。まず Web インターフェースを開きます。
+> **macOS 27 では使えません。** CUPS の Web インターフェースが無効化され、
+> `/printers/` も `/admin` も「ウェブインターフェイスが無効になっています」を返すだけになりました。
+> **`cupsctl` の設定一覧から `WebInterface` の項目自体が消えている**ので、
+> 有効に戻す手段もありません（実機で確認）。macOS 27 以降は `mi700default` を使ってください。
+
+macOS 26 までは、CUPS の管理画面でも同じことができました。
 
 ```bash
 sudo cupsctl WebInterface=yes
@@ -295,13 +301,8 @@ sudo cupsctl WebInterface=yes
 
 <http://localhost:631/printers/> でキューを選び、**Administration → Set Default Options**。
 Mac の管理者アカウントで認証を求められます。給紙口・用紙サイズ・排出方向・印刷品質を
-選んで保存すれば、`mi700default` と同じ結果になります。PPD の日本語ラベルはそのまま表示されます。
-
-用が済んだら閉じておきます。
-
-```bash
-sudo cupsctl WebInterface=No
-```
+選んで保存すれば、`mi700default` と同じ結果になります。用が済んだら
+`sudo cupsctl WebInterface=No` で閉じます。
 
 ### 用途ごとにキューを分ける
 
