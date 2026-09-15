@@ -97,7 +97,8 @@ static int feedto(int units) {
 }
 
 static void encode_page(const unsigned char *ras, unsigned w, unsigned h,
-                        unsigned stride, unsigned vdpi, int invert) {
+                        unsigned stride, unsigned vdpi, int invert,
+                        unsigned xoff, unsigned yoff) {
     unsigned char *cols = malloc((size_t)w * 3);
     int at = 0;
     if (!cols) return;
@@ -122,11 +123,11 @@ static void encode_page(const unsigned char *ras, unsigned w, unsigned h,
         }
         if (first < 0) continue;                          /* 空白バンドは送らない */
         {   /* 縦位置は絶対値で管理する(相対送りを積むと丸め誤差が溜まる) */
-            double want = (double)top * TDPI / (double)vdpi;
+            double want = (double)(top + yoff) * TDPI / (double)vdpi;
             at += feedto((int)(want + 0.5) - at);
         }
         printf("\033H\033e11");
-        printf("\033F%04ld", first);
+        printf("\033F%04ld", first + (long)xoff);
         printf("\033H\033e11");
         printf("\033J%04ld", last - first + 1);
         fwrite(cols + first*3, 1, (size_t)(last - first + 1) * 3, stdout);
@@ -428,10 +429,17 @@ int main(int argc, char *argv[]) {
 
     for (;;) {
         unsigned char hdr[HDRSIZE];
-        unsigned vdpi, w, h, bpp, stride, cspace;
+        unsigned vdpi, hdpi, w, h, bpp, stride, cspace;
+        unsigned bbtop, mleft, pgh, xoff = 0, yoff = 0;
         unsigned char *ras;
         if (readn(hdr, HDRSIZE) != HDRSIZE) break;
+        hdpi   = rd32(hdr + 276);
         vdpi   = rd32(hdr + 280);
+        /* ラスタは印字可能範囲ぶんしか無いので、ページ原点からのずれを足し戻す。
+           これをしないと内容が左上にずれる(連続紙は余白0なので影響しない) */
+        bbtop  = rd32(hdr + 296);            /* ImagingBoundingBox の上辺(下端基準pt) */
+        mleft  = rd32(hdr + 312);            /* Margins[0] = 左余白(pt) */
+        pgh    = rd32(hdr + 356);            /* PageSize[1] = ページ高さ(pt) */
         w      = rd32(hdr + 372);
         h      = rd32(hdr + 376);
         bpp    = rd32(hdr + 388);
@@ -500,7 +508,12 @@ int main(int argc, char *argv[]) {
             fputs(is_feeder ? "\033a" : is_cut ? "\033b" : "\014", stdout);
         }
         logmsg("DEBUG", "ページ%d: %ux%u ドット", pages + 1, w, h);
-        encode_page(ras, w, h, stride, vdpi, cspace == 0);
+        if (hdpi && mleft)            xoff = (unsigned)((double)mleft * hdpi / 72.0 + 0.5);
+        if (pgh && bbtop && pgh > bbtop)
+            yoff = (unsigned)((double)(pgh - bbtop) * vdpi / 72.0 + 0.5);
+        if (xoff || yoff)
+            logmsg("DEBUG", "印字可能範囲のオフセット: 左%uドット 上%uドット", xoff, yoff);
+        encode_page(ras, w, h, stride, vdpi, cspace == 0, xoff, yoff);
         free(ras);
         pages++;
     }
