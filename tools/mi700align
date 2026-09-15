@@ -4,6 +4,13 @@
 トラクタを動かしたときや印字位置が怪しいときに、用紙1枚で
 「ページの原点が用紙端から何mmの位置に来ているか」を実測できる。
 
+目盛りはすべて**ページ座標**(ページ原点からのmm)。基準線は
+**印字可能範囲の角**に引く。ページ原点そのものは印字可能範囲の外に
+あることが多く(カット紙なら左1.6mm・上8.7mm)、そこに線を引いても
+ラスタライズの時点で切り捨てられて出てこないため。
+
+  用紙の端から目盛りまでを測り、その目盛りの数字を引けばページ原点が出る。
+
   mi700align Cont10x45 | pdf2mi700 --source rear --direction uni > /tmp/a.prn
   mi700align --size 210x297 | pdf2mi700 --source cut --direction uni > /tmp/a.prn
 """
@@ -23,8 +30,13 @@ def forms():
             if not line or line.startswith("#"):
                 continue
             f = line.split("\t")
-            if len(f) >= 4:
-                out.setdefault(f[0], (f[1], float(f[2]), float(f[3])))
+            if len(f) < 4:
+                continue
+            # 5〜8列目 = ページ座標での印字不可領域 左/右/上/下 mm (省略可)
+            def col(k):
+                return float(f[k]) if len(f) > k and f[k].strip() else 0.0
+            out.setdefault(f[0], (f[1], float(f[2]), float(f[3]),
+                                  col(4), col(5), col(6), col(7)))
     return out
 
 
@@ -33,53 +45,86 @@ def main():
     args = sys.argv[1:]
     if not args:
         print("用紙を指定してください。登録済み:", file=sys.stderr)
-        for k, (lbl, w, h) in sorted(F.items()):
-            print(f"  {k:<12} {lbl}  {w} x {h} mm", file=sys.stderr)
+        for k, v in sorted(F.items()):
+            print(f"  {k:<12} {v[0]}  {v[1]} x {v[2]} mm", file=sys.stderr)
         print("  または --size 幅x高さ (mm)", file=sys.stderr)
         return 1
     if args[0] == "--size":
         w, h = (float(v) for v in args[1].lower().split("x"))
-        label = f"{w:g} x {h:g}mm"
+        lm = rm = tm = bm = 0.0
+        name = f"{w:g}x{h:g}mm"
     elif args[0] in F:
-        _, w, h = F[args[0]]
+        _, w, h, lm, rm, tm, bm = F[args[0]]
         # PostScript の標準フォントは日本語を出せないので ASCII のキー名を使う
-        label = f"{args[0]}  {w:g} x {h:g}mm"
+        name = args[0]
     else:
         print(f"未登録の用紙: {args[0]}", file=sys.stderr)
         return 1
 
-    # 用紙からはみ出す可能性があるので、目盛りは実寸より少し内側までにする
-    mx = int((w - 10) // 10)
-    my = int((h - 10) // 10)
-    ps = [f"""%!PS-Adobe-3.0
-<< /PageSize [{w*72/25.4:.0f} {h*72/25.4:.0f}] >> setpagedevice
-/mm {{ 72 mul 25.4 div }} def
-/T {{ {h*72/25.4:.0f} exch sub }} def
-/Helvetica findfont 8 scalefont setfont
-0.4 mm setlinewidth
-0 mm 0 mm T moveto 0 mm {min(h-8, my*10):g} mm T lineto stroke
-0 mm 0 mm T moveto {min(w-8, mx*10):g} mm 0 mm T lineto stroke
-/Helvetica-Bold findfont 8 scalefont setfont
-3 mm 5.5 mm T moveto (X=0  measure from paper LEFT edge) show
-gsave 5.5 mm 4 mm T translate 90 rotate 0 0 moveto (Y=0  from TOP edge) show grestore
-0.25 mm setlinewidth
-10 mm 0 mm T moveto 10 mm {min(h-8, my*10):g} mm T lineto stroke
-0.3 mm setlinewidth"""]
-    ps.append(f"0 1 {mx} {{ /i exch def i 10 mul mm 0 mm T moveto "
-              f"0 i 5 mod 0 eq {{ -6 mm }} {{ -3 mm }} ifelse rlineto stroke }} for")
-    ps.append(f"0 1 {mx//5} {{ /i exch def i 50 mul mm 2 add 9 mm T moveto "
-              f"i 50 mul 3 string cvs show }} for")
-    ps.append(f"0 1 {my} {{ /i exch def 0 mm i 10 mul mm T moveto "
-              f"i 5 mod 0 eq {{ 6 mm }} {{ 3 mm }} ifelse 0 rlineto stroke }} for")
-    ps.append(f"0 1 {my//5} {{ /i exch def 8 mm i 50 mul mm T 2 sub moveto "
-              f"i 50 mul 3 string cvs show }} for")
-    ps.append(f"""/Helvetica-Bold findfont 9 scalefont setfont
-20 mm {h/2:.0f} mm T moveto (MI700XX ALIGN CHECK) show
-/Helvetica findfont 8 scalefont setfont
-20 mm {h/2+6:.0f} mm T moveto ({label}  page origin = printable top-left) show
-20 mm {h/2+12:.0f} mm T moveto (ruler ticks every 10mm from page origin) show
-showpage""")
-    print("\n".join(ps))
+    # 印字可能範囲(ページ座標)。ここから外に引いた線は出てこない
+    x0, y0, x1, y1 = lm, tm, w - rm, h - bm
+    if x1 - x0 < 20 or y1 - y0 < 20:
+        print(f"印字可能範囲が狭すぎます: {x1-x0:g} x {y1-y0:g} mm", file=sys.stderr)
+        return 1
+
+    # 目盛りはページ座標の10mm刻み。印字可能範囲に入るものだけ描く
+    xs = [t for t in range(0, int(w) + 1, 10) if x0 <= t <= x1 - 2]
+    ys = [t for t in range(0, int(h) + 1, 10) if y0 <= t <= y1 - 2]
+    if not xs or not ys:
+        print("目盛りを置ける余地がありません", file=sys.stderr)
+        return 1
+
+    P = 72 / 25.4
+    def mm(v): return v * P
+
+    o = [f"""%!PS-Adobe-3.0
+<< /PageSize [{w*P:.0f} {h*P:.0f}] >> setpagedevice
+/mm {{ {P:.6f} mul }} def
+/T {{ {h*P:.4f} exch sub }} def
+/L {{ moveto lineto stroke }} def
+/Helvetica findfont 8 scalefont setfont"""]
+
+    # 基準線 = 印字可能範囲の左辺と上辺。必ず印字される
+    o.append("0.4 mm setlinewidth")
+    o.append(f"{x0:g} mm {y0:g} mm T {x0:g} mm {ys[-1]:g} mm T L")
+    o.append(f"{x0:g} mm {y0:g} mm T {xs[-1]:g} mm {y0:g} mm T L")
+
+    # 角に印を付けて、それがページ座標で何mmかを書く
+    o.append("/Helvetica-Bold findfont 7 scalefont setfont")
+    o.append(f"{x0+1.5:g} mm {y0+5:g} mm T moveto "
+             f"(PRINTABLE TOP-LEFT = page \\({lm:g}, {tm:g}\\)mm) show")
+
+    # 目盛り(ページ座標)。5本ごとに長くする
+    o.append("0.3 mm setlinewidth")
+    for t in xs:
+        o.append(f"{t:g} mm {y0:g} mm T {t:g} mm {y0 + (6 if t % 50 == 0 else 3):g} mm T L")
+    for t in ys:
+        o.append(f"{x0:g} mm {t:g} mm T {x0 + (6 if t % 50 == 0 else 3):g} mm {t:g} mm T L")
+
+    # 数字。最初の1本は必ず、あとは50mmごと
+    o.append("/Helvetica findfont 7 scalefont setfont")
+    for t in xs:
+        if t == xs[0] or t % 50 == 0:
+            o.append(f"{t:g} mm 1 add {y0+10:g} mm T moveto ({t:g}) show")
+    for t in ys:
+        if t == ys[0] or t % 50 == 0:
+            o.append(f"{x0+8:g} mm {t:g} mm T 2 sub moveto ({t:g}) show")
+
+    # 使い方。印字可能範囲の中に置く
+    ty = y0 + (y1 - y0) / 2
+    tx = x0 + 15
+    o.append("/Helvetica-Bold findfont 9 scalefont setfont")
+    o.append(f"{tx:g} mm {ty:g} mm T moveto (MI700XX ALIGN CHECK) show")
+    o.append("/Helvetica findfont 8 scalefont setfont")
+    for i, s in enumerate([
+        f"{name}  {w:g} x {h:g}mm   margins L{lm:g} R{rm:g} T{tm:g} B{bm:g} mm",
+        "ticks are PAGE coordinates in mm from the page origin",
+        "to locate the page origin: measure from the paper edge to any tick,",
+        "then subtract that tick number.",
+    ]):
+        o.append(f"{tx:g} mm {ty + 6 + i*5:g} mm T moveto ({s}) show")
+    o.append("showpage")
+    print("\n".join(o))
     return 0
 
 
