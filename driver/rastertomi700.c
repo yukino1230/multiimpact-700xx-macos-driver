@@ -467,6 +467,10 @@ int main(int argc, char *argv[]) {
                           「印刷範囲を超えて印字」エラーになり、点滅して停止する
                  ESC L000 レフトマージン
                  ESC f    順方向改行 */
+            /* 前のジョブが異常終了して残った印刷データを捨てる。Windows ドライバも
+               初期化の先頭で送っている。ESC c8 は末尾で送っているので正常終了なら
+               状態は初期化済みだが、中断された場合の保険 */
+            fputc(0x18, stdout);                          /* CAN */
             fputs("\033M", stdout);
             fputs("\033/136", stdout);
             fputs("\033L000", stdout);
@@ -478,6 +482,8 @@ int main(int argc, char *argv[]) {
             printf("\034" "05F2-%s", !strcmp(kanji,"1978") ? "00"
                                    : !strcmp(kanji,"1983") ? "01" : "02");
             fputs("\033e11", stdout);
+            fputs("\033\"", stdout);                       /* 強調印刷モード解除 */
+            fputs("\033Y", stdout);                        /* ライン印刷モード解除 */
             printf("\033m%c", !strcmp(source,"front") ? '1' : is_cut ? '2' : '3');
             fputc(0x19, stdout);                          /* EM: 給紙口切替の完了を待つ */
             if (is_cut) {

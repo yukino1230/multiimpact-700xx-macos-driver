@@ -207,15 +207,15 @@ snmpset -v1 -c public <IP> 1.3.6.1.2.1.1.6.0 s "事務所"
 ```bash
 git clone https://github.com/yukino1230/multiimpact-700xx-macos-driver.git
 cd multiimpact-700xx-macos-driver
-sudo installer -pkg dist/mi700-3.2.pkg -target /
+sudo installer -pkg dist/mi700-3.3.pkg -target /
 sudo mi700setup <プリンタのIP>
 ```
 
 自分でビルドする場合はこうです（`forms.conf` を編集したときもこちら）。
 
 ```bash
-./driver/build-pkg.sh 3.2
-sudo installer -pkg build/mi700-3.2.pkg -target /
+./driver/build-pkg.sh 3.3
+sudo installer -pkg build/mi700-3.3.pkg -target /
 ```
 
 ### 署名と公証（配布する人向け）
@@ -227,7 +227,7 @@ sudo installer -pkg build/mi700-3.2.pkg -target /
 
 ```bash
 xcrun notarytool store-credentials mi700 --apple-id <Apple ID> --team-id <Team ID>
-MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.2
+MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.3
 ```
 
 フィルタを Hardened Runtime 付きで署名 → pkg を署名 → 公証 → `stapler staple` まで行います。
@@ -266,7 +266,7 @@ quarantine 属性が付くのはブラウザでダウンロードしたファイ
 ダウンロードしてダブルクリックするだけで入ります。確かめたい場合は:
 
 ```bash
-spctl -a -vvv -t install mi700-3.2.pkg
+spctl -a -vvv -t install mi700-3.3.pkg
 # accepted / source=Notarized Developer ID と出れば正常です
 ```
 
@@ -575,6 +575,9 @@ mi700preset --list               # 一覧
 
 Windows ドライバが出力したデータを `FILE:` ポートで吸い出し、それと突き合わせて確定させました。
 **推測ではなく、出力を測って確認したもの**です。
+
+さらに 201PL リファレンスと 700XX2/JX3 のユーザーズマニュアルを、**実装が出す制御コード1つずつと突き合わせて精査しました**（2026-09-16）。齟齬はありませんでした。
+実測で突き止めた「LSB が上端」「`ESC T` は 1/120 インチ」も、そのまま文書に記載がありました。
 
 - **解像度は縦横とも 160dpi**（正方ピクセル）。全角24×24ドットの正方性から逆算
 - `ESC J nnnn` + データ = 24ドットビットイメージ。1列3バイト、**バイト内は LSB が上端**
