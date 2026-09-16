@@ -193,15 +193,15 @@ snmpset -v1 -c public <IP> 1.3.6.1.2.1.1.6.0 s "事務所"
 ```bash
 git clone https://github.com/yukino1230/multiimpact-700xx-macos-driver.git
 cd multiimpact-700xx-macos-driver
-sudo installer -pkg dist/mi700-3.1.pkg -target /
+sudo installer -pkg dist/mi700-3.2.pkg -target /
 sudo mi700setup <プリンタのIP>
 ```
 
 自分でビルドする場合はこうです（`forms.conf` を編集したときもこちら）。
 
 ```bash
-./driver/build-pkg.sh 3.1
-sudo installer -pkg build/mi700-3.1.pkg -target /
+./driver/build-pkg.sh 3.2
+sudo installer -pkg build/mi700-3.2.pkg -target /
 ```
 
 ### 署名と公証（配布する人向け）
@@ -213,7 +213,7 @@ sudo installer -pkg build/mi700-3.1.pkg -target /
 
 ```bash
 xcrun notarytool store-credentials mi700 --apple-id <Apple ID> --team-id <Team ID>
-MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.1
+MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.2
 ```
 
 フィルタを Hardened Runtime 付きで署名 → pkg を署名 → 公証 → `stapler staple` まで行います。
@@ -252,7 +252,7 @@ quarantine 属性が付くのはブラウザでダウンロードしたファイ
 ダウンロードしてダブルクリックするだけで入ります。確かめたい場合は:
 
 ```bash
-spctl -a -vvv -t install mi700-3.1.pkg
+spctl -a -vvv -t install mi700-3.2.pkg
 # accepted / source=Notarized Developer ID と出れば正常です
 ```
 
@@ -582,6 +582,10 @@ Windows ドライバが出力したデータを `FILE:` ポートで吸い出し
   `ImageableArea` の左上です。ヘッダの `Margins` と `ImagingBoundingBox` を読んで
   その分ずらし戻さないと、**内容が左上にずれて印刷されます**（連続紙は余白0なので影響なし。
   カット紙で実測して発覚しました）。CUPS が持っているのは整数ポイントなので 0.2mm ほど丸められます
+- **`FS 05v`（カット紙の用紙長）はどちらのマニュアルにも載っていません。** Windows の
+  キャプチャ2つから逆算しました。単位は 1/120 インチで、**カット紙のときだけ +300（2.5インチ）**
+  が付きます（連続紙の捕獲は `540` = 4.5インチちょうど、A4 のカット紙は `1703` = 11.69インチ + 2.5インチ）。
+  これは**用紙の長さ**であってラスタの高さではありません
 - **SNMP は Host Resources だけ。** `hrPrinterDetectedErrorState` で用紙切れ・カバー開・
   紙詰まり・オフラインが取れます。Printer-MIB (1.3.6.1.2.1.43) は未実装なので、
   用紙残量・リボン残量・装着オプションは取得できません
