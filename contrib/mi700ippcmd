@@ -1,0 +1,29 @@
+#!/bin/bash
+# ippeveprinter から1ドキュメントごとに呼ばれる変換コマンド（移行の出発点）
+#
+#   ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
+#                 -f image/pwg-raster -a <属性ファイル> "MultiImpact 700XX"
+#
+# PWG Raster は CUPS Raster v2 と同じ容器なので、rastertomi700 が手を加えずに読める。
+# 印刷可能データは stdout へ(ippeveprinter が -D のデバイスへ送る)。
+# stderr の DEBUG:/INFO:/STATE: は CUPS フィルタと同じ作法で解釈される。
+set -u
+FILTER=/usr/local/libexec/cups/filter/rastertomi700
+
+SRC="${1:-}"
+[ -n "$SRC" ] && [ -r "$SRC" ] || SRC=/dev/stdin
+
+# ジョブの設定は IPP_<属性名> で渡ってくる
+opt=""
+[ -n "${IPP_MEDIA_SOURCE:-}" ] && opt="$opt InputSlot=$IPP_MEDIA_SOURCE"
+[ -n "${IPP_OUTPUT_BIN:-}" ]   && opt="$opt OutputBin=$IPP_OUTPUT_BIN"
+case "${IPP_PRINT_QUALITY:-}" in
+  draft)  opt="$opt OutputMode=draft-bi" ;;
+  high)   opt="$opt OutputMode=std-uni" ;;
+  normal) opt="$opt OutputMode=std-bi" ;;
+esac
+# 独自属性を属性ファイルで定義したなら、ここで読み替える
+[ -n "${IPP_MI700BOTTOM:-}" ] && opt="$opt MI700Bottom=$IPP_MI700BOTTOM"
+
+echo "DEBUG: $CONTENT_TYPE ->$opt" >&2
+exec "$FILTER" 1 "${USER:-me}" "${IPP_JOB_NAME:-job}" 1 "$opt" "$SRC"
