@@ -22,7 +22,7 @@ NOTARY="${MI700_NOTARY:-}"
 
 rm -rf "$BUILD"; mkdir -p "$ROOT" "$BUILD/scripts"
 mkdir -p "$ROOT/usr/local/libexec/cups/filter" "$ROOT/usr/local/bin" \
-         "$ROOT/usr/local/share/mi700/presets" \
+         "$ROOT/usr/local/share/mi700/presets" "$ROOT/usr/local/libexec/mi700" \
          "$ROOT/Library/Printers/PPDs/Contents/Resources"
 
 echo "==> CUPS フィルタをビルド(ユニバーサル)"
@@ -62,6 +62,10 @@ done
 install -m 755 "$HERE/mi700setup"   "$ROOT/usr/local/bin/mi700setup"
 install -m 755 "$HERE/mi700default" "$ROOT/usr/local/bin/mi700default"
 install -m 755 "$HERE/mi700status"  "$ROOT/usr/local/bin/mi700status"
+# PPD を使わない経路(ippeveprinter で AirPrint / IPP Everywhere のプリンタにする)
+install -m 755 "$HERE/mi700ipp"             "$ROOT/usr/local/bin/mi700ipp"
+install -m 755 "$HERE/mkippattr.py"         "$ROOT/usr/local/share/mi700/mkippattr.py"
+install -m 755 "$HERE/../contrib/mi700ippcmd" "$ROOT/usr/local/libexec/mi700/mi700ippcmd"
 
 echo "==> 拡張属性を除去"
 xattr -cr "$ROOT" 2>/dev/null || true

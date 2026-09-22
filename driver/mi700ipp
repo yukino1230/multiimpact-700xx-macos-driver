@@ -1,0 +1,172 @@
+#!/bin/bash
+# MultiImpact 700XX を AirPrint / IPP Everywhere のプリンタとして常駐させる
+#
+#   mi700ipp add <プリンタのIP> [名前] [--port 8631]
+#   mi700ipp remove [名前|ポート]
+#   mi700ipp list
+#
+# macOS 標準の ippeveprinter を launchd に登録する。PPD を使わないので、
+# PPD ベースのドライバが macOS から無くなっても動く。iPhone からも印刷できる。
+#
+# sudo 付き  → LaunchDaemon(ログインしていなくても動く。印刷サーバ向け)
+# sudo なし  → LaunchAgent (このユーザーがログインしている間だけ動く)
+#
+# 開発用: MI700_DEVICE でデバイス URI を差し替えられる(file:///path など)。
+#         MI700_FILTER は mi700ippcmd にそのまま渡す。
+set -eu
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LABEL_PREFIX="io.github.yukino1230.mi700ipp"
+NAME_DEFAULT="MultiImpact 700XX"
+PORT_DEFAULT=8631
+
+# 部品の場所。インストール済みならそれを、無ければリポジトリ内のものを使う
+pick() { for f in "$@"; do [ -e "$f" ] && { echo "$f"; return; }; done; echo "$1"; }
+MKATTR=$(pick /usr/local/share/mi700/mkippattr.py "$HERE/mkippattr.py")
+CMD=$(pick /usr/local/libexec/mi700/mi700ippcmd "$HERE/../contrib/mi700ippcmd")
+FILTER=/usr/local/libexec/cups/filter/rastertomi700
+
+if [ "$(id -u)" = 0 ]; then
+  KIND=LaunchDaemon; PLISTDIR=/Library/LaunchDaemons
+  DATA=/Library/Application\ Support/mi700ipp; LOGDIR=/Library/Logs/mi700
+  DOMAIN=system
+else
+  KIND=LaunchAgent; PLISTDIR="$HOME/Library/LaunchAgents"
+  DATA="$HOME/Library/Application Support/mi700ipp"; LOGDIR="$HOME/Library/Logs/mi700"
+  DOMAIN="gui/$(id -u)"
+fi
+
+usage() {
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+cmd_list() {
+  local found=0
+  for p in "$PLISTDIR/$LABEL_PREFIX".*.plist; do
+    [ -e "$p" ] || continue
+    found=1
+    local label port name dev state
+    label=$(basename "$p" .plist)
+    port=${label##*.}
+    name=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments" "$p" | sed -n '$!p' | tail -1 | sed 's/^ *//')
+    dev=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments" "$p" | grep -A1 -- '^ *-D$' | tail -1 | sed 's/^ *//')
+    if launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then state="動作中"; else state="停止"; fi
+    printf '%-6s %-5s %-28s %s\n' "$state" "$port" "$name" "$dev"
+  done
+  [ $found = 1 ] || echo "登録されていません($KIND)"
+}
+
+cmd_add() {
+  local ip="" name="$NAME_DEFAULT" port="$PORT_DEFAULT"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$ip" ]; then ip="$1"; else name="$1"; fi; shift ;;
+    esac
+  done
+  [ -n "$ip" ] || usage
+  case "$port" in ''|*[!0-9]*) echo "ポートは数字で指定してください: $port"; exit 1 ;; esac
+
+  command -v python3 >/dev/null || { echo "python3 が必要です(属性ファイルの生成に使います)"; exit 1; }
+  [ -x "$CMD" ] || { echo "変換コマンドがありません: $CMD"; exit 1; }
+  [ -x "${MI700_FILTER:-$FILTER}" ] || { echo "フィルタがありません: ${MI700_FILTER:-$FILTER}"; exit 1; }
+
+  local label="$LABEL_PREFIX.$port"
+  local plist="$PLISTDIR/$label.plist"
+  local conf="$DATA/$port.conf" spool="$DATA/spool-$port"
+  local dev="${MI700_DEVICE:-socket://$ip:9100}"
+
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 && [ ! -e "$plist" ]; then
+    echo "ポート $port は使用中です。--port で別の番号を指定してください"; exit 1
+  fi
+  case "$dev" in socket://*)
+    nc -z -G 3 -w 3 "$ip" 9100 2>/dev/null || echo "警告: $ip:9100 に接続できません(登録は続行)" ;;
+  esac
+
+  mkdir -p "$DATA" "$spool" "$LOGDIR" "$PLISTDIR"
+  echo "==> 属性ファイルを生成: $conf"
+  python3 "$MKATTR" > "$conf"
+
+  # 既に登録済みなら止めてから書き換える
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+
+  echo "==> $KIND を登録: $plist"
+  {
+    cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ippeveprinter</string>
+    <string>-p</string><string>$port</string>
+    <string>-r</string><string>_print,_universal</string>
+    <string>-D</string><string>$(printf '%s' "$dev" | xml)</string>
+    <string>-c</string><string>$(printf '%s' "$CMD" | xml)</string>
+    <string>-a</string><string>$(printf '%s' "$conf" | xml)</string>
+    <string>-d</string><string>$(printf '%s' "$spool" | xml)</string>
+    <string>-v</string>
+    <string>$(printf '%s' "$name" | xml)</string>
+  </array>
+EOF
+    if [ -n "${MI700_FILTER:-}" ]; then
+      cat <<EOF
+  <key>EnvironmentVariables</key>
+  <dict><key>MI700_FILTER</key><string>$(printf '%s' "$MI700_FILTER" | xml)</string></dict>
+EOF
+    fi
+    cat <<EOF
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$(printf '%s' "$LOGDIR/$port.log" | xml)</string>
+  <key>StandardOutPath</key><string>$(printf '%s' "$LOGDIR/$port.log" | xml)</string>
+</dict>
+</plist>
+EOF
+  } > "$plist"
+  plutil -lint "$plist" >/dev/null
+
+  launchctl bootstrap "$DOMAIN" "$plist"
+  sleep 2
+  if launchctl print "$DOMAIN/$label" 2>/dev/null | grep -q 'state = running'; then
+    echo "完了しました。「$name」として Bonjour に名乗っています。"
+    echo "  Mac:    設定 >「プリンタとスキャナ」> 追加(ドライバは自動で決まります)"
+    echo "  iPhone: 共有 > プリント で選べます"
+    echo "  ログ:   $LOGDIR/$port.log"
+    echo "  削除:   $( [ "$KIND" = LaunchDaemon ] && echo 'sudo ')mi700ipp remove $port"
+  else
+    echo "起動できませんでした。ログを確認してください: $LOGDIR/$port.log"
+    tail -5 "$LOGDIR/$port.log" 2>/dev/null || true
+    exit 1
+  fi
+}
+
+cmd_remove() {
+  local key="${1:-$PORT_DEFAULT}" label="" p
+  for p in "$PLISTDIR/$LABEL_PREFIX".*.plist; do
+    [ -e "$p" ] || continue
+    if [ "$(basename "$p" .plist)" = "$LABEL_PREFIX.$key" ] ||
+       /usr/libexec/PlistBuddy -c "Print :ProgramArguments" "$p" | sed 's/^ *//' | grep -qxF -- "$key"; then
+      label=$(basename "$p" .plist); break
+    fi
+  done
+  [ -n "$label" ] || { echo "見つかりません: $key"; cmd_list; exit 1; }
+  local port=${label##*.}
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+  rm -f "$PLISTDIR/$label.plist" "$DATA/$port.conf"
+  rm -rf "$DATA/spool-$port"
+  echo "削除しました: $label(ログは $LOGDIR/$port.log に残っています)"
+}
+
+case "${1:-}" in
+  add)    shift; cmd_add "$@" ;;
+  remove) shift; cmd_remove "$@" ;;
+  list)   cmd_list ;;
+  *)      usage ;;
+esac

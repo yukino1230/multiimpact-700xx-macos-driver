@@ -19,12 +19,26 @@ FILTER="${MI700_FILTER:-/usr/local/libexec/cups/filter/rastertomi700}"   # 開�
 
 SRC="${1:-}"
 [ -n "$SRC" ] && [ -r "$SRC" ] || SRC=/dev/stdin
+if [ "$SRC" = /dev/stdin ]; then       # 先頭を覗くので、いったんファイルに受ける
+  TMP=$(mktemp -t mi700ipp); trap 'rm -f "$TMP"' EXIT
+  cat > "$TMP"; SRC="$TMP"
+fi
 
 # PWG Raster と URF はどちらも rastertomi700 が直接読める。
 #   lpadmin -m everywhere で追加した Mac → PWG Raster
 #   システム設定から追加した Mac(AirPrint 扱い) → URF
+#   ドライバ(PPD)を入れた Mac → このドライバで変換済みの 201PL が
+#   application/octet-stream で届く(機種名が一致するので PPD が自動で選ばれる)
 case "${CONTENT_TYPE:-image/pwg-raster}" in
   image/pwg-raster|image/urf) ;;
+  application/octet-stream|application/vnd.cups-raw)
+    # rastertomi700 の出力は必ず CAN ESC M で始まる。それ以外(PDF など)を
+    # そのまま流すと、プリンタが文字として印字してしまうので断る
+    if [ "$(head -c 3 "$SRC" | xxd -p)" = "181b4d" ]; then
+      echo "INFO: ドライバで変換済みのデータをそのまま送ります" >&2
+      cat "$SRC"; exit $?
+    fi
+    echo "ERROR: MultiImpact 700XX 用のデータではありません ($CONTENT_TYPE)" >&2; exit 1 ;;
   *) echo "ERROR: $CONTENT_TYPE は扱えません (image/pwg-raster と image/urf のみ)" >&2; exit 1 ;;
 esac
 
@@ -76,5 +90,6 @@ case "${IPP_PRINT_QUALITY:-}" in
 esac
 
 echo "DEBUG: $CONTENT_TYPE media-col=${IPP_MEDIA_COL:-} ->$opt" >&2
-exec "$FILTER" 1 "${IPP_JOB_ORIGINATING_USER_NAME:-${USER:-me}}" \
+"$FILTER" 1 "${IPP_JOB_ORIGINATING_USER_NAME:-${USER:-me}}" \
      "${IPP_JOB_NAME:-job}" 1 "$opt" "$SRC"
+exit $?

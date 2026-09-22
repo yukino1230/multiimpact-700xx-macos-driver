@@ -518,13 +518,36 @@ URF はグレーで届くので、網掛けの濃さはこちらで決めるこ�
 
 ### 動かし方
 
-`/usr/bin/ippeveprinter` が IPP のプリンタとして Bonjour に名乗り、ジョブごとに
-[`contrib/mi700ippcmd`](contrib/mi700ippcmd) を実行します。属性ファイルは
-[`driver/mkippattr.py`](driver/mkippattr.py) が `forms.conf` から作ります。
+**`mi700ipp`** で常駐させます。macOS 標準の `/usr/bin/ippeveprinter` を launchd に登録し、
+「MultiImpact 700XX」として Bonjour に名乗らせます。
 
 ```bash
-driver/mkippattr.py > mi700.conf
-ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
+sudo mi700ipp add 192.168.1.160            # 常駐させる(ログインしていなくても動く)
+mi700ipp list                               # 一覧
+sudo mi700ipp remove                        # 外す
+```
+
+| | sudo 付き | sudo なし |
+|---|---|---|
+| 登録先 | LaunchDaemon | LaunchAgent |
+| 動く時間 | **常に**（印刷サーバ向け） | そのユーザーがログインしている間 |
+| ログ | `/Library/Logs/mi700/<ポート>.log` | `~/Library/Logs/mi700/<ポート>.log` |
+
+名前とポートは `mi700ipp add <IP> "名前" --port 8632` で変えられます。
+
+登録すると、同じネットワークの **Mac（システム設定から追加）と iPhone** から印刷できます。
+**このドライバを入れた Mac から追加すると PPD が自動で選ばれ**、ミシン目回避なども含めた
+今までどおりの UI で、同じサーバに印刷できます（変換済みのデータをそのまま通します）。
+
+中身は次の3つです。
+
+- [`driver/mkippattr.py`](driver/mkippattr.py) — `forms.conf` から属性ファイルを作る（`mkppd.py` の IPP 版）
+- [`contrib/mi700ippcmd`](contrib/mi700ippcmd) — ジョブごとに呼ばれ、URF / PWG Raster を `rastertomi700` に渡す。
+  ドライバで変換済みの 201PL（先頭が `CAN ESC M`）はそのまま通し、それ以外は断る
+- `ippeveprinter` の起動引数:
+
+```bash
+ippeveprinter -D socket://<IP>:9100 -c /usr/local/libexec/mi700/mi700ippcmd \
               -a mi700.conf -r _print,_universal "MultiImpact 700XX"
 ```
 
@@ -545,7 +568,12 @@ ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
 - `-a` を使っても、`ippeveprinter` は自前の `document-format-supported` を**追加します**。
   属性が重複しますが、先に出たほう（属性ファイル側）が使われます
 - **stderr の `STATE:` / `INFO:` / `ERROR:` / `DEBUG:` は CUPS フィルタと同じ作法**なので、
-  用紙切れの通知もそのまま動きます
+  用紙切れの通知もそのまま動きます。ただし **CUPS と違ってジョブが終わっても状態が片付きません**。
+  開始時の「用紙なし」を持ち続けると iPhone が「用紙がセットされていない」として次のジョブを
+  送らなくなるので、フィルタはジョブの終わりにもう一度状態を調べ直します
+- ドライバを入れた Mac（PPD）からは `Create-Job` + `Send-Document` で届きます。
+  `Print-Job` で `application/octet-stream` を送ると、`ippeveprinter` が中身から形式を推定しようとして
+  入口で断りますが、実際のクライアントはこの経路を使いません
 
 ### Mac からの追加方法で、届く形式が変わります
 
@@ -558,8 +586,8 @@ PWG Raster だけを広告した場合は、システム設定のドライバ欄
 **ふつうの人がふつうに追加できるようにするには URF が必須**でした。
 
 また、**このドライバが入っている Mac では、機種名が一致すると PPD のほうが自動で選ばれます**。
-その場合は今までどおりの UI になりますが、手元で 201PL に変換したデータが届くため、
-`mi700ippcmd` は受け付けません（ドライバを入れた Mac は IPP を経由せず直接つなげば済みます）。
+その場合は今までどおりの UI になり、手元で 201PL に変換したデータが届きます。
+`mi700ippcmd` はそれをそのままプリンタへ通します。
 
 ### 失われるもの
 

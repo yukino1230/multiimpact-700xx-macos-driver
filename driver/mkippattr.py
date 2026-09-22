@@ -111,6 +111,9 @@ def main():
     # ドライバなしでは追加できない(lpadmin -m everywhere なら追加できる)。
     # URF を広告すると、システム設定から追加した Mac は URF で送ってくる。
     # ippeveprinter の -r _print,_universal も必要(AirPrint のサブタイプ)
+    # ドライバ(PPD)を入れた Mac からは変換済みの 201PL が届くが、CUPS は
+    # Create-Job + Send-Document で送ってくるので、ここに載せなくても通る
+    # (中身は mi700ippcmd が確かめる)
     w("ATTR mimeMediaType document-format-supported image/pwg-raster,image/urf")
     w("ATTR mimeMediaType document-format-default image/pwg-raster")
     # URF: 8bit グレー(W8)・160dpi(RS160)・片面(DM1)。フィルタがディザで 1bit にする
