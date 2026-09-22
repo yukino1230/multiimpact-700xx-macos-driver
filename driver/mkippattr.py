@@ -112,9 +112,9 @@ def main():
     # URF: 8bit グレー(W8)・160dpi(RS160)・片面(DM1)。フィルタがディザで 1bit にする
     w("ATTR keyword urf-supported V1.4,W8,DM1,RS160,CP1,IS1-4,MT1")
     # 1bit 白黒・160dpi だけ。rastertomi700 は 1bit 以外を受け付けない
-    # 白黒(bi-level)とグレースケール(monochrome)を選べるようにする。既定は白黒。
-    # ドットインパクトの用途は文字と帳票が中心で、iPhone は黒い文字を
-    # 値 69 のグレーで送ってくるため、グレーで刷ると文字が網点になる
+    # 白黒(bi-level)とグレースケール(monochrome)。ただし Mac も iPhone も
+    # モノクロのプリンタには切り替えを出さず、常に monochrome を送ってくるので、
+    # 実際の切り替えは ippeveprinter の MI700_COLOR で行う(mi700ippcmd 参照)
     w("ATTR keyword print-color-mode-supported bi-level,monochrome")
     w("ATTR keyword print-color-mode-default bi-level")
     w("ATTR keyword pwg-raster-document-type-supported black_1")
