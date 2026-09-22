@@ -498,11 +498,21 @@ rastertomi700 1 me job 1 "InputSlot=feeder" pwg.ras > out.prn   # そのまま�
 
 ```bash
 ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
-              -f image/pwg-raster -a <属性ファイル> "MultiImpact 700XX"
+              -a <属性ファイル> -r _print,_universal "MultiImpact 700XX"
 ```
 
+**`ippeveprinter` のオプションには、組み合わせられないものがあります。** どれも Usage を出して止まるだけで、
+理由は表示されません。
+
+| 組み合わせ | 代わりに |
+|---|---|
+| `-P`（PPD）と `-c`（変換コマンド） | 属性は `-a` のファイルに書く |
+| `-a` と `-f`（受け付ける形式） | `document-format-supported` を属性ファイルに書く |
+| `-a` と `-M` / `-m`（メーカー・機種名） | `printer-make-and-model` を属性ファイルに書く |
+
 出発点として [`contrib/mi700ippcmd`](contrib/mi700ippcmd) を置いてあります。
-ジョブの設定は `IPP_MEDIA_SOURCE` のような **`IPP_<属性名>` の環境変数**で渡ってきます。
+ジョブの設定は **`IPP_<属性名>` の環境変数**で渡ってきます。ただし macOS から送ると、
+給紙口は `IPP_MEDIA_SOURCE` ではなく **`IPP_MEDIA_COL` の中**（`{media-source=rear ...}`）に入っています。
 **stderr の `STATE:` / `INFO:` / `ERROR:` / `DEBUG:` は CUPS フィルタとまったく同じ作法**なので、
 用紙切れの通知もそのまま動きます。
 
@@ -513,7 +523,16 @@ ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
 `-a` の**属性ファイルとして書き直す**ことになります。
 
 ただし `mkppd.py` が `forms.conf` から PPD を生成している構造はそのまま使えます。
-**出力先を PPD から IPP 属性に変えるだけ**です。
+**出力先を PPD から IPP 属性に変えるだけ**です。`media-size-supported` を書き忘れると、
+用紙を指定したジョブが `Unsupported media-col collection value` で拒否されます。
+
+### システム設定から追加するには URF が要ります
+
+PWG Raster だけを広告したプリンタは、`lpadmin -m everywhere` なら追加できますが、
+**システム設定（プリンタとスキャナ）のドライバ欄に AirPrint の選択肢が出てきません。**
+**URF の広告と `-r _print,_universal` の両方**がそろうと追加できるようになり、
+その場合 Mac は **URF で送ってきます**。つまり、ふつうに使えるようにするには
+**このフィルタに URF の読み込みを足す必要があります**。
 
 ### 失われるもの
 
@@ -530,11 +549,14 @@ ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
 **今すぐ移行する理由はありません。** PPD 経路のほうが UI は優れており、macOS 27 の時点で
 問題なく動いています。これは「そのときが来たら何をすればよいか」の記録です。
 
+属性ファイルの生成・URF の読み込み・実機での検証結果は
+[`ipp-everywhere` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/ipp-everywhere)
+で進めています。
+
 ### iPhone から印刷したい場合
 
-AirPrint は **URF（Apple Raster）** を要求します。`urf-supported` を返さないと
-iOS は印刷先として認識しません。URF は PWG Raster と構造が近いので不可能ではありませんが、
-**別途リーダーの実装が必要**で、この移行手順の延長線上にはありません。
+AirPrint は **URF（Apple Raster）** を要求します。上に書いたとおり Mac のシステム設定から
+追加する場合にも URF が要るので、**URF の読み込みは移行するなら避けられない作業**です。
 
 ## 付属コマンド
 

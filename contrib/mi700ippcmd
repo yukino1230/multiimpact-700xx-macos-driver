@@ -2,7 +2,12 @@
 # ippeveprinter から1ドキュメントごとに呼ばれる変換コマンド（移行の出発点）
 #
 #   ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
-#                 -f image/pwg-raster -a <属性ファイル> "MultiImpact 700XX"
+#                 -a <属性ファイル> -r _print,_universal "MultiImpact 700XX"
+#
+# -a と -f は同時に指定できない(Usage を出して止まる)。受け付ける形式は
+# 属性ファイルの document-format-supported に書く。
+# macOS から送ると給紙口は IPP_MEDIA_SOURCE ではなく IPP_MEDIA_COL の中に入る。
+# 完成版は ipp-everywhere ブランチにある。
 #
 # PWG Raster は CUPS Raster v2 と同じ容器なので、rastertomi700 が手を加えずに読める。
 # 印刷可能データは stdout へ(ippeveprinter が -D のデバイスへ送る)。
