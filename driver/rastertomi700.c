@@ -525,9 +525,18 @@ int main(int argc, char *argv[]) {
             fputs(is_feeder ? "\033a" : is_cut ? "\033b" : "\014", stdout);
         }
         logmsg("DEBUG", "ページ%d: %ux%u ドット", pages + 1, w, h);
-        if (hdpi && mleft)            xoff = (unsigned)((double)mleft * hdpi / 72.0 + 0.5);
-        if (pgh && bbtop && pgh > bbtop)
-            yoff = (unsigned)((double)(pgh - bbtop) * vdpi / 72.0 + 0.5);
+        /* CUPS ラスタ(cgpdftoraster)は印字可能範囲ぶんしか無いのでずらし戻す。
+           PWG Raster(IPP Everywhere)はページ全体がラスタになっていて、
+           ImagingBoundingBox には印字可能範囲が「情報として」入っているだけ。
+           これでずらすと余白ぶん二重にずれる(A4 で下に8.4mm)ので、ラスタが
+           ページ全体を覆っているときはずらさない */
+        if (pgh && (double)h * 72.0 / vdpi >= (double)pgh - 2.0) {
+            if (bbtop || mleft) logmsg("DEBUG", "ページ全体のラスタなのでずらさない");
+        } else {
+            if (hdpi && mleft)            xoff = (unsigned)((double)mleft * hdpi / 72.0 + 0.5);
+            if (pgh && bbtop && pgh > bbtop)
+                yoff = (unsigned)((double)(pgh - bbtop) * vdpi / 72.0 + 0.5);
+        }
         if (xoff || yoff)
             logmsg("DEBUG", "印字可能範囲のオフセット: 左%uドット 上%uドット", xoff, yoff);
         encode_page(ras, w, h, stride, vdpi, cspace == 0, xoff, yoff);
