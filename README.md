@@ -665,6 +665,20 @@ AirPrint は **URF（Apple Raster）** を要求します。`urf-supported` を�
 iOS は印刷先として認識しません。URF は PWG Raster と構造が近いので不可能ではありませんが、
 **別途リーダーの実装が必要**で、この移行手順の延長線上にはありません。
 
+### 「アプリを入れれば AirPrint のまま独自の設定が出せる」は macOS では成り立たない
+
+AI やネットの記事で「プリント拡張機能アプリ（`UIPrintServiceExtension`）や `NSPrintPanelAccessorizing` を
+使えば、AirPrint 接続のまま印刷ダイアログにメーカー独自の設定を出せ、その値は IPP の独自属性として
+プリンタに届く」という説明を見かけます。**macOS 27 で確かめた限り、成り立ちません。**
+
+- `UIPrintServiceExtension` は iOS / iPadOS 向けの**プリンタを探す**ための拡張機能で、画面は差し込めない
+- `NSPrintPanelAccessorizing` は**自分のアプリの**印刷ダイアログ用で、他のアプリには効かない
+- ドライバなしのキューに独自の設定（`-o mi700-bottom=6` など3通り）を付けて印刷すると、
+  **CUPS の段階で捨てられ、プリンタ側には届かない**（実測）
+
+これは Windows の **Print Support App** の仕組みと混同された説明のようです。
+ミシン目回避・ボトム領域のような独自の機能は、PPD の経路で使ってください。
+
 ## 付属コマンド
 
 いずれもパッケージに含まれ、`/usr/local/bin` に入ります。
