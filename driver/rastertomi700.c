@@ -412,7 +412,8 @@ static const char *printer_host(void) {
 static void report_status(void) {
     static const char *ALL =
         "media-empty-warning,marker-supply-low-warning,marker-supply-empty-warning,"
-        "cover-open-warning,media-jam-warning,offline-report,other-warning";
+        "cover-open-warning,media-jam-warning,offline-report,other-warning,"
+        "media-needed-warning";
     unsigned char v[64];
     int len = 0, tag, b;
     const char *host;
@@ -671,5 +672,10 @@ int main(int argc, char *argv[]) {
     if (!pages) { logmsg("ERROR", "ページがありません"); return 1; }
     fputs(is_cut ? "\r\033b\033c8" : "\r\014\033c8", stdout);
     fflush(stdout);
+    /* 終わりにもう一度調べて状態を更新する。開始時に「用紙なし」だったまま
+       片付けないと、ippeveprinter はそれを持ち続け、iPhone は「用紙がセット
+       されていない」として次のジョブを送らなくなる(CUPS はジョブ終了時に
+       片付けるので表に出なかった) */
+    report_status();
     return 0;
 }
