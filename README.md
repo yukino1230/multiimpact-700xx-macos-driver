@@ -7,6 +7,13 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
 > A CUPS driver for the NEC MultiImpact 700XX dot-matrix printer on macOS.
 > NEC ships no macOS driver for this printer; this one speaks 201PL (PC-PR201) directly.
 
+**現在の版は [v3.4](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v3.4)**（署名・公証済みの pkg を [Releases](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases) で配布しています）。
+**iPhone / iPad からも印刷できる試験版 [v4.0-beta1](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta1)** もあります。
+PPD を使わずに AirPrint のプリンタとして常駐させる版で、[`ipp-everywhere` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/ipp-everywhere)で開発しています。
+
+> Current release: **v3.4**. A beta, **v4.0-beta1**, adds printing from iPhone/iPad and driverless Macs
+> by running the printer as an AirPrint (IPP Everywhere) service without a PPD (`ipp-everywhere` branch).
+
 **ドットインパクトプリンタ**は複写伝票や連続紙の印刷に今も使われていますが、
 メーカーは macOS 用のドライバを出していません。「Mac から印刷できない」
 「Windows でしか使えない」と諦めていた方に向けたものです。
@@ -19,6 +26,8 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
   CUPS ラスタ → 201PL の変換だけを C で行います。Ghostscript も libcups も要りません
 - **用紙定義はテキストファイル1つ。** `forms.conf` に1行足せば用紙が増えます
 - **プリンタの状態を印刷キューに出します。** 用紙切れやカバー開のときに理由が表示されます
+- **iPhone からも印刷できます（試験版 v4.0-beta1）。** AirPrint のプリンタとして常駐させます。
+  詳しくは「[PPD が使えなくなったときの移行先](#ppd-が使えなくなったときの移行先)」
 
 ## 対象機種
 
