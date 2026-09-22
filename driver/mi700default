@@ -106,8 +106,8 @@ resolve_val() {   # $1=key $2=入力値
   hit="$(get_choices "$key" | awk -F'\t' -v v="$val" 'index($2,v) {print $1}')"
   case "$(printf '%s' "$hit" | grep -c . || true)" in
     1) echo "$hit"; return 0 ;;
-    0) echo "「$val」は $(get_label "$key") の値にありません" >&2 ;;
-    *) echo "「$val」は $(get_label "$key") の複数の値に一致します: $(echo $hit)" >&2 ;;
+    0) echo "「${val}」は $(get_label "$key") の値にありません" >&2 ;;
+    *) echo "「${val}」は $(get_label "$key") の複数の値に一致します: $(echo $hit)" >&2 ;;
   esac
   return 1
 }
