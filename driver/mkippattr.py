@@ -112,8 +112,11 @@ def main():
     # URF: 8bit グレー(W8)・160dpi(RS160)・片面(DM1)。フィルタがディザで 1bit にする
     w("ATTR keyword urf-supported V1.4,W8,DM1,RS160,CP1,IS1-4,MT1")
     # 1bit 白黒・160dpi だけ。rastertomi700 は 1bit 以外を受け付けない
-    w("ATTR keyword print-color-mode-supported monochrome")
-    w("ATTR keyword print-color-mode-default monochrome")
+    # 白黒(bi-level)とグレースケール(monochrome)を選べるようにする。既定は白黒。
+    # ドットインパクトの用途は文字と帳票が中心で、iPhone は黒い文字を
+    # 値 69 のグレーで送ってくるため、グレーで刷ると文字が網点になる
+    w("ATTR keyword print-color-mode-supported bi-level,monochrome")
+    w("ATTR keyword print-color-mode-default bi-level")
     w("ATTR keyword pwg-raster-document-type-supported black_1")
     w("ATTR resolution pwg-raster-document-resolution-supported 160dpi")
     w("ATTR resolution printer-resolution-supported 160dpi")
@@ -124,7 +127,9 @@ def main():
     # 用紙。余白は印字可能範囲(推奨印刷範囲)。クライアントはここに描かない
     w("ATTR keyword media-supported " + ",".join(names))
     w("ATTR keyword media-default " + dname)
-    w("ATTR keyword media-ready " + dname)
+    # セット済みの用紙。iPhone はこの中からしか選ばせないので全部を載せる
+    # (A4 だけにしていたら、iPhone の用紙サイズが A4 だけになった)
+    w("ATTR keyword media-ready " + ",".join(names))
     for key in ("left", "right", "top", "bottom"):
         i = {"left": 4, "right": 5, "top": 6, "bottom": 7}[key]
         vals = sorted({h(f[i]) for f in S})
@@ -139,7 +144,8 @@ def main():
     w("ATTR collection media-col-database " +
       ",".join(col(n, *f[2:8]) for f, n in zip(S, names)))
     w("ATTR collection media-col-default " + col(dname, *D[2:8], source="main"))
-    w("ATTR collection media-col-ready " + col(dname, *D[2:8], source="main"))
+    w("ATTR collection media-col-ready " +
+      ",".join(col(n, *f[2:8]) for f, n in zip(S, names)))
     w("")
     w("ATTR keyword media-source-supported " + ",".join(SOURCES))
     w("ATTR keyword output-bin-supported " + ",".join(BINS))

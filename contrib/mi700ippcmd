@@ -48,6 +48,11 @@ esac
 
 opt="InputSlot=$slot"
 [ -n "${IPP_OUTPUT_BIN:-}" ] && opt="$opt OutputBin=$IPP_OUTPUT_BIN"
+# 白黒かグレースケールか(URF のときだけ効く。PWG Raster は 1bit で届く)
+case "${IPP_PRINT_COLOR_MODE:-bi-level}" in
+  monochrome) opt="$opt MI700Color=gray" ;;
+  *)          opt="$opt MI700Color=bilevel" ;;
+esac
 # 印刷品質。IPP の3段階に4通りを割り当てる(片方向ドラフトは選べない)
 case "${IPP_PRINT_QUALITY:-}" in
   draft)  opt="$opt OutputMode=draft-bi" ;;
