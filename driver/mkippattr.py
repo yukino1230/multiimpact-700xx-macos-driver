@@ -39,6 +39,8 @@ PWG = {
 # 読み替えは contrib/mi700ippcmd が行う
 SOURCES = ["main", "manual", "rear", "bottom"]
 BINS = ["front", "rear"]
+# 用紙の種類。表示は iPhone「普通紙/写真」、Mac「便箋/写真用紙」(どちらも OS の訳語)
+TYPES = ["stationery", "photographic"]
 
 
 def forms():
@@ -72,7 +74,7 @@ def pwgname(key, w, hh):
     return f"custom_{key.lower()}_{w:g}x{hh:g}mm"
 
 
-def col(name, w, hh, l, r, t, b, source=None):
+def col(name, w, hh, l, r, t, b, source=None, mtype=None):
     m = [f"MEMBER collection media-size {{ MEMBER integer x-dimension {h(w)} "
          f"MEMBER integer y-dimension {h(hh)} }}",
          f"MEMBER integer media-left-margin {h(l)}",
@@ -80,6 +82,8 @@ def col(name, w, hh, l, r, t, b, source=None):
          f"MEMBER integer media-top-margin {h(t)}",
          f"MEMBER integer media-bottom-margin {h(b)}",
          f"MEMBER keyword media-size-name {name}"]
+    if mtype:
+        m.append(f"MEMBER keyword media-type {mtype}")
     if source:
         m.append(f"MEMBER keyword media-source {source}")
     return "{ " + " ".join(m) + " }"
@@ -112,9 +116,7 @@ def main():
     # URF: 8bit グレー(W8)・160dpi(RS160)・片面(DM1)。フィルタがディザで 1bit にする
     w("ATTR keyword urf-supported V1.4,W8,DM1,RS160,CP1,IS1-4,MT1")
     # 1bit 白黒・160dpi だけ。rastertomi700 は 1bit 以外を受け付けない
-    # 白黒(bi-level)とグレースケール(monochrome)。ただし Mac も iPhone も
-    # モノクロのプリンタには切り替えを出さず、常に monochrome を送ってくるので、
-    # 実際の切り替えは ippeveprinter の MI700_COLOR で行う(mi700ippcmd 参照)
+    # 白黒/グレーの実際の切り替えは用紙の種類で行う(下の media-type 参照)
     w("ATTR keyword print-color-mode-supported bi-level,monochrome")
     w("ATTR keyword print-color-mode-default bi-level")
     w("ATTR keyword pwg-raster-document-type-supported black_1")
@@ -141,8 +143,14 @@ def main():
     w("ATTR collection media-size-supported " + ",".join(
         f"{{ MEMBER integer x-dimension {x} MEMBER integer y-dimension {y} }}"
         for x, y in sizes))
+    # 用紙の種類。写真(photographic)を選ぶとグレースケール、それ以外は白黒
+    # (mi700ippcmd が読み替える)。白黒/グレーの切り替えを出せる標準の項目で、
+    # Mac にも iPhone にも出るのはこれだけだった(print-color-mode はモノクロの
+    # プリンタだと出ない。print-content-optimize はどちらにも出ない)
+    w("ATTR keyword media-type-supported " + ",".join(TYPES))
+    w("ATTR keyword media-type-default stationery")
     w("ATTR collection media-col-database " +
-      ",".join(col(n, *f[2:8]) for f, n in zip(S, names)))
+      ",".join(col(n, *f[2:8], mtype=t) for t in TYPES for f, n in zip(S, names)))
     w("ATTR collection media-col-default " + col(dname, *D[2:8], source="main"))
     w("ATTR collection media-col-ready " +
       ",".join(col(n, *f[2:8]) for f, n in zip(S, names)))

@@ -5,9 +5,6 @@
 #   ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
 #                 -a mi700.conf -r _print,_universal "MultiImpact 700XX"
 #
-#   グレースケールのプリンタも並べるなら(ポートと名前を変える):
-#   MI700_COLOR=gray ippeveprinter -p 8632 ... "MultiImpact 700XX (グレー)"
-#
 # -r _print,_universal と URF の広告がそろわないと、macOS のシステム設定は
 # AirPrint のプリンタとして扱わず、ドライバなしでは追加できない。
 #
@@ -52,15 +49,20 @@ esac
 opt="InputSlot=$slot"
 [ -n "${IPP_OUTPUT_BIN:-}" ] && opt="$opt OutputBin=$IPP_OUTPUT_BIN"
 # 白黒かグレースケールか(URF のときだけ効く。PWG Raster は 1bit で届く)
-# Mac も iPhone も、モノクロのプリンタには切り替えを出さずに常に
-# print-color-mode=monochrome を送ってくる。これは「指定なし」とみなし、
-# ippeveprinter を起動するときの MI700_COLOR(bilevel / gray)に従う。
-# 両方使いたいときは、名前とポートを変えて2つ起動する。
-# クライアントが bi-level を明示したときだけ、それに従う。
-case "${IPP_PRINT_COLOR_MODE:-}" in
-  bi-level) color=bilevel ;;
-  *)        color="${MI700_COLOR:-bilevel}" ;;
+# メディアタイプで選ぶ: 写真(photographic)ならグレースケール、それ以外は白黒。
+# print-color-mode は使えない。Mac も iPhone もモノクロのプリンタには切り替えを
+# 出さず、常に monochrome を送ってくる(カラー対応と偽っても、iPhone は初期状態で
+# 何も送らず、区別がつかない)。メディアタイプは Mac(写真用紙/便箋)にも
+# iPhone(写真/普通紙)にも出る。
+mtype="${IPP_MEDIA_TYPE:-}"
+if [ -z "$mtype" ]; then
+  mtype=$(printf '%s' "${IPP_MEDIA_COL:-}" | sed -n 's/.*media-type=\([a-z0-9-]*\).*/\1/p')
+fi
+case "$mtype" in
+  photographic*) color=gray ;;
+  *)             color="${MI700_COLOR:-bilevel}" ;;   # 既定を変えたいときだけ使う
 esac
+[ "${IPP_PRINT_COLOR_MODE:-}" = bi-level ] && color=bilevel
 case "$color" in
   gray|bilevel) ;;
   *) echo "WARNING: MI700_COLOR=$color は不明です。白黒で印刷します" >&2; color=bilevel ;;
