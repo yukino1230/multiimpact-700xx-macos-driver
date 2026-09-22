@@ -108,8 +108,9 @@ static const unsigned char BAYER8[8][8] = {
  *   打った割合  10  20  30  40  50  60  70  80  90 %
  *   紙の濃さ    12  24  34  44  49  51  53  54  56 %
  * 指定した濃さに比例した濃さが出るよう、打つ割合を逆算する表を作る。
- * 黒(100%)は必ず全部打つ(文字の芯を薄くしないため) */
+ * 約69%より濃い色(SOLID 以下)は網掛けにせず全部打つ(文字を網点にしないため) */
 static unsigned char TONE[256];
+#define SOLID 80   /* これ以下(約69%より濃い)は塗りつぶす */
 static void tone_init(void) {
     static const double C[] = {0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1};
     static const double D[] = {0, .12, .24, .34, .44, .49, .51, .53, .54, .56, .58};
@@ -170,7 +171,10 @@ static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
                 const unsigned char *q = line + (size_t)x * px;
                 /* 8bit はグレー(0=黒)。RGB は輝度に直す */
                 unsigned g = px == 1 ? q[0] : (q[0]*299u + q[1]*587u + q[2]*114u) / 1000u;
-                g = 255u - TONE[255u - g];                 /* 濃さを打つ割合に直す */
+                /* 暗い色は網掛けにせず全部打つ。iPhone は黒い文字を 69 の一色で
+                   送ってくる(真っ黒の 0 が来ない)ので、補正にかけると文字が網点になる */
+                if (g <= SOLID) g = 0;
+                else g = 255u - TONE[255u - g];            /* 濃さを打つ割合に直す */
                 if (g < BAYER8[y & 7][x & 7] * 4u + 2u)   /* 閾値 2..254。白は打たず黒は必ず打つ */
                     o[x >> 3] |= (unsigned char)(0x80u >> (x & 7));
             }
