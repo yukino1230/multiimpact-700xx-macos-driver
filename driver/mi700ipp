@@ -135,7 +135,7 @@ EOF
   launchctl bootstrap "$DOMAIN" "$plist"
   sleep 2
   if launchctl print "$DOMAIN/$label" 2>/dev/null | grep -q 'state = running'; then
-    echo "完了しました。「$name」として Bonjour に名乗っています。"
+    echo "完了しました。「${name}」として Bonjour に名乗っています。"
     echo "  Mac:    設定 >「プリンタとスキャナ」> 追加(ドライバは自動で決まります)"
     echo "  iPhone: 共有 > プリント で選べます"
     echo "  ログ:   $LOGDIR/$port.log"
