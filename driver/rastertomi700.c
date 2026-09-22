@@ -103,6 +103,25 @@ static const unsigned char BAYER8[8][8] = {
     { 3,35,11,43, 1,33, 9,41},{51,19,59,27,49,17,57,25},
     {15,47, 7,39,13,45, 5,37},{63,31,55,23,61,29,53,21}};
 
+/* ドットゲインの補正。ドットインパクトは1点が広がって隣とつながるので、
+ * 点を半分打った時点でほぼ塗りつぶしに見える。実測(A4、2026-09-22):
+ *   打った割合  10  20  30  40  50  60  70  80  90 %
+ *   紙の濃さ    12  24  34  44  49  51  53  54  56 %
+ * 指定した濃さに比例した濃さが出るよう、打つ割合を逆算する表を作る。
+ * 黒(100%)は必ず全部打つ(文字の芯を薄くしないため) */
+static unsigned char TONE[256];
+static void tone_init(void) {
+    static const double C[] = {0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1};
+    static const double D[] = {0, .12, .24, .34, .44, .49, .51, .53, .54, .56, .58};
+    for (int i = 0; i < 256; i++) {
+        double want = D[10] * i / 255.0, c = 1.0;
+        for (int k = 1; k <= 10; k++)
+            if (want <= D[k]) { c = C[k-1] + (C[k]-C[k-1]) * (want-D[k-1]) / (D[k]-D[k-1]); break; }
+        TONE[i] = (unsigned char)(c * 255.0 + 0.5);
+    }
+    TONE[255] = 255;
+}
+
 static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
                     unsigned *pstride, unsigned *pres) {
     unsigned char h[32], *line, *ras;
@@ -151,6 +170,7 @@ static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
                 const unsigned char *q = line + (size_t)x * px;
                 /* 8bit はグレー(0=黒)。RGB は輝度に直す */
                 unsigned g = px == 1 ? q[0] : (q[0]*299u + q[1]*587u + q[2]*114u) / 1000u;
+                g = 255u - TONE[255u - g];                 /* 濃さを打つ割合に直す */
                 if (g < BAYER8[y & 7][x & 7] * 4u + 2u)   /* 閾値 2..254。白は打たず黒は必ず打つ */
                     o[x >> 3] |= (unsigned char)(0x80u >> (x & 7));
             }
@@ -506,6 +526,7 @@ int main(int argc, char *argv[]) {
         if (readn(rest, 8) != 8 || memcmp(rest, "AST", 4)) {
             logmsg("ERROR", "URF ではありません"); return 1; }
         urf = 1;
+        tone_init();
     }
     else { logmsg("ERROR", "CUPS ラスタでも URF でもありません"); return 1; }
 
