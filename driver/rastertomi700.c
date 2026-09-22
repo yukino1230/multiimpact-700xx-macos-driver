@@ -504,7 +504,11 @@ int main(int argc, char *argv[]) {
                     lines = v;
                 }
             } else {                                      /* 連続紙は簡易VFU(行数) */
-                lines = (int)((double)h / vdpi * LINE_INCH + 0.5);
+                /* カット紙と同じく**用紙の長さ**から出す。ミシン目回避の用紙は
+                   上下25.4mmずつ印字不可なので、ラスタの高さだと2インチ短くなり
+                   改ページのたびに2インチずつずれていく */
+                double plen = pgh ? (double)pgh / 72.0 : (double)h / vdpi;
+                lines = (int)(plen * LINE_INCH + 0.5);
                 if (lines >= 1 && lines <= 99) {
                     if (bottom > 0 && bottom <= lines - 2) printf("\033v%02d,%02d.", lines, bottom);
                     else                                   printf("\033v%02d.", lines);
