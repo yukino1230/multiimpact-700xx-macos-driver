@@ -88,6 +88,6 @@ lpadmin -p "$QUEUE" -E -v "socket://$IP:9100" -P "$PPD" \
         -D "NEC MultiImpact 700XX" -L "LAN" -o printer-is-shared=false
 
 echo
-echo "完了しました。印刷ダイアログに「$QUEUE」が出ます。"
+echo "完了しました。印刷ダイアログに「${QUEUE}」が出ます。"
 echo "  用紙サイズを増やす: ~/Developer/mi700/forms.conf に1行足して、このスクリプトを再実行"
 echo "  アンインストール  : sudo $0 --uninstall"
