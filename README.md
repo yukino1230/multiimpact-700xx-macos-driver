@@ -210,15 +210,15 @@ snmpset -v1 -c public <IP> 1.3.6.1.2.1.1.6.0 s "事務所"
 ```bash
 git clone https://github.com/yukino1230/multiimpact-700xx-macos-driver.git
 cd multiimpact-700xx-macos-driver
-sudo installer -pkg dist/mi700-3.3.pkg -target /
+sudo installer -pkg dist/mi700-3.4.pkg -target /
 sudo mi700setup <プリンタのIP>
 ```
 
 自分でビルドする場合はこうです（`forms.conf` を編集したときもこちら）。
 
 ```bash
-./driver/build-pkg.sh 3.3
-sudo installer -pkg build/mi700-3.3.pkg -target /
+./driver/build-pkg.sh 3.4
+sudo installer -pkg build/mi700-3.4.pkg -target /
 ```
 
 ### 署名と公証（配布する人向け）
@@ -230,7 +230,7 @@ sudo installer -pkg build/mi700-3.3.pkg -target /
 
 ```bash
 xcrun notarytool store-credentials mi700 --apple-id <Apple ID> --team-id <Team ID>
-MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.3
+MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.4
 ```
 
 フィルタを Hardened Runtime 付きで署名 → pkg を署名 → 公証 → `stapler staple` まで行います。
@@ -269,7 +269,7 @@ quarantine 属性が付くのはブラウザでダウンロードしたファイ
 ダウンロードしてダブルクリックするだけで入ります。確かめたい場合は:
 
 ```bash
-spctl -a -vvv -t install mi700-3.3.pkg
+spctl -a -vvv -t install mi700-3.4.pkg
 # accepted / source=Notarized Developer ID と出れば正常です
 ```
 
