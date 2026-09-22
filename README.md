@@ -480,57 +480,87 @@ Apple は PPD ベースの従来型ドライバを非推奨としています。
 
 ### 変換部分はそのまま使えます
 
-IPP Everywhere でプリンタが受け取るのは **PDF か PWG Raster** です。PWG Raster は
-CUPS Raster v2 をベースにした規格で、**マジックもヘッダ構造も同じ**（`RaS2` / `2SaR`）。
-このフィルタは **libcups に依存せずラスタを自前で解析している**ので、手を加えずに読めます。
+IPP Everywhere / AirPrint でプリンタが受け取るのは **PWG Raster か URF（Apple Raster）** です。
+
+- **PWG Raster** は CUPS Raster v2 をベースにした規格で、**マジックもヘッダ構造も同じ**（`RaS2`）。
+  このフィルタは libcups に依存せずラスタを自前で解析しているので、手を加えずに読めます
+- **URF** は構造の近い別形式です。**読み込みを足してあります**（8bit グレーを 8×8 の組織的ディザで 1bit に）
+
+どちらも**ページ全体がラスタ**になっている点が CUPS ラスタと違います。CUPS ラスタは
+印字可能範囲ぶんしか無いので余白ぶんずらし戻していますが、ページ全体のラスタで同じことをすると
+二重にずれます（A4 で下に 8.4mm）。フィルタはラスタの高さとページの高さを比べて判断しています。
+
+### 動かし方
+
+`/usr/bin/ippeveprinter` が IPP のプリンタとして Bonjour に名乗り、ジョブごとに
+[`contrib/mi700ippcmd`](contrib/mi700ippcmd) を実行します。属性ファイルは
+[`driver/mkippattr.py`](driver/mkippattr.py) が `forms.conf` から作ります。
 
 ```bash
-cupsfilter -m image/pwg-raster -p <PPD> in.pdf > pwg.ras
-rastertomi700 1 me job 1 "InputSlot=feeder" pwg.ras > out.prn   # そのまま通る
-```
-
-実際に通して、正常な 201PL が出ることを確認済みです。
-
-### 土台は macOS に標準で入っています
-
-`/usr/bin/ippeveprinter` が IPP Everywhere のプリンタとして Bonjour に名乗り、
-ジョブごとに指定したコマンドを実行します。
-
-```bash
+driver/mkippattr.py > mi700.conf
 ippeveprinter -D socket://<IP>:9100 -c $PWD/contrib/mi700ippcmd \
-              -f image/pwg-raster -a <属性ファイル> "MultiImpact 700XX"
+              -a mi700.conf -r _print,_universal "MultiImpact 700XX"
 ```
 
-出発点として [`contrib/mi700ippcmd`](contrib/mi700ippcmd) を置いてあります。
-ジョブの設定は `IPP_MEDIA_SOURCE` のような **`IPP_<属性名>` の環境変数**で渡ってきます。
-**stderr の `STATE:` / `INFO:` / `ERROR:` / `DEBUG:` は CUPS フィルタとまったく同じ作法**なので、
-用紙切れの通知もそのまま動きます。
+**`ippeveprinter` のオプションには、組み合わせられないものがあります。** どれも Usage を出して止まるだけで、
+理由は表示されません。
 
-### 書き直しが要るのは属性定義だけ
+| 組み合わせ | 代わりに |
+|---|---|
+| `-P`（PPD）と `-c`（変換コマンド） | 属性は `-a` のファイルに書く |
+| `-a` と `-f`（受け付ける形式） | `document-format-supported` を属性ファイルに書く |
+| `-a` と `-M` / `-m`（メーカー・機種名） | `printer-make-and-model` を属性ファイルに書く |
 
-**`-P` で PPD を渡すことはできません。** `-c`（変換コマンド）と併用できず、
-`-P` を指定すると変換コマンドが固定されてしまいます。用紙22種・給紙口・印刷品質の定義は、
-`-a` の**属性ファイルとして書き直す**ことになります。
+ほかに、実際に動かしてみて分かったことです。
 
-ただし `mkppd.py` が `forms.conf` から PPD を生成している構造はそのまま使えます。
-**出力先を PPD から IPP 属性に変えるだけ**です。
+- **`media-size-supported` を書かないと、用紙を指定したジョブが拒否されます**
+  （`Unsupported media-col collection value`。既定の letter / legal / a4 と照合されるため）
+- **給紙口は `IPP_MEDIA_SOURCE` ではなく `IPP_MEDIA_COL` の中で届きます**（`{media-source=rear ...}`）
+- `-a` を使っても、`ippeveprinter` は自前の `document-format-supported` を**追加します**。
+  属性が重複しますが、先に出たほう（属性ファイル側）が使われます
+- **stderr の `STATE:` / `INFO:` / `ERROR:` / `DEBUG:` は CUPS フィルタと同じ作法**なので、
+  用紙切れの通知もそのまま動きます
+
+### Mac からの追加方法で、届く形式が変わります
+
+| 追加方法 | 条件 | 届く形式 |
+|---|---|---|
+| `lpadmin -m everywhere` | PWG Raster だけでも可 | PWG Raster |
+| **システム設定**（プリンタとスキャナ） | **URF の広告と `-r _print,_universal` の両方が必要** | **URF** |
+
+PWG Raster だけを広告した場合は、システム設定のドライバ欄に AirPrint の選択肢が出てきません。
+**ふつうの人がふつうに追加できるようにするには URF が必須**でした。
+
+また、**このドライバが入っている Mac では、機種名が一致すると PPD のほうが自動で選ばれます**。
+その場合は今までどおりの UI になりますが、手元で 201PL に変換したデータが届くため、
+`mi700ippcmd` は受け付けません（ドライバを入れた Mac は IPP を経由せず直接つなげば済みます）。
 
 ### 失われるもの
 
-ドライバレス経路の制約をそのまま受けます（[共有の節](#クライアントにもドライバを入れてください)で実測したとおり）。
+システム設定から追加したときの印刷ダイアログは、次のようになりました。
 
-| | |
-|---|---|
-| **ミシン目回避** | **消えます。** IPP の用紙は寸法で識別されるので、同寸法の通常版に潰れます |
-| **印刷品質** | `print-quality` は draft/normal/high の**3段階**。4種類は表せません |
-| **ボトム領域** | 対応する標準属性がありません |
-| 用紙名 | 日本語名ではなく `iso_a4_210x297mm` のような機械的な名前になります |
-| 給紙口・排出方向 | **残ります**（IPP 標準の `media-source` / `output-bin` に対応づけてあるため） |
+| | PPD（今の方式） | IPP Everywhere |
+|---|---|---|
+| 用紙名 | `A4`・`連続紙 10x11インチ` | 標準の用紙は訳される（`A4`・`JIS B4`・`レター`）。**それ以外は `10 x 11`・`55x91mm` のように寸法だけ** |
+| **ミシン目回避** | 使える | **消える**（同じ寸法の通常版に潰れる） |
+| 給紙口 | シートフィーダ・シートガイド・リアトラクタ・フロントトラクタ | **主トレイ・手差し・リアトレイ・下段トレイ**（macOS の訳語） |
+| 排出方向 | 手前側・奥側 | 「仕上げオプション」の中に **Front・背面** |
+| **印刷品質** | 4種類 + 指定なし | **下書き・標準・最高の3段階**（片方向のドラフトが選べない） |
+| **ボトム領域** | 使える | **消える**（対応する標準属性が無い） |
+
+給紙口に独自の名前（`reartractor` など）を付けても、**macOS は IPP 標準のキーワード以外を捨てます**。
+そのため `main` / `manual` / `rear` / `bottom` に割り当て、`mi700ippcmd` で読み替えています。
 
 **今すぐ移行する理由はありません。** PPD 経路のほうが UI は優れており、macOS 27 の時点で
-問題なく動いています。これは「そのときが来たら何をすればよいか」の記録です。
+問題なく動いています。これは「そのときが来たら何をすればよいか」の記録で、
+実装は `ipp-everywhere` ブランチにあります。
 
 ### iPhone から印刷したい場合
+
+AirPrint の条件（URF と `_universal`）はそろっているので、**理屈の上では iPhone からも見えるはず**です。
+ただし実機ではまだ試していません。
+
+## iPhone から印刷したい場合
 
 AirPrint は **URF（Apple Raster）** を要求します。`urf-supported` を返さないと
 iOS は印刷先として認識しません。URF は PWG Raster と構造が近いので不可能ではありませんが、

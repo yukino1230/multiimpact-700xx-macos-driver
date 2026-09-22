@@ -31,7 +31,7 @@
 #define HDRSIZE  1796      /* cups_page_header2_t */
 
 static FILE *in;
-static int   little, compressed;
+static int   little, compressed, urf;
 
 static void logmsg(const char *lv, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -83,6 +83,82 @@ static int unrle(unsigned char *out, unsigned stride, unsigned height, unsigned 
     }
     free(line);
     return 0;
+}
+
+/* ---- URF (Apple Raster) ------------------------------------------------
+ * macOS をシステム設定から「AirPrint のプリンタ」として追加すると、PWG Raster
+ * ではなく URF で送ってくる(IPP Everywhere の経路。contrib/mi700ippcmd 参照)。
+ *   "UNIRAST\0" + ページ数(4, BE)
+ *   ページごと: bpp(1) 色空間(1) 両面(1) 品質(1) 予約(8)
+ *               幅(4) 高さ(4) 解像度(4) 予約(8)   = 32バイト
+ *   行ごと: 行の繰り返し数-1(1) + 画素の並び
+ *     0..127  次の1画素を n+1 回
+ *     128     行の残りを白で埋める
+ *     129..255 続く 257-n 画素をそのまま
+ * ページ全体がラスタになっている(PWG Raster と同じ)。
+ * グレーは 8x8 の組織的ディザで 1bit にする(網掛けや画像を潰さないため)。 */
+static const unsigned char BAYER8[8][8] = {
+    { 0,32, 8,40, 2,34,10,42},{48,16,56,24,50,18,58,26},
+    {12,44, 4,36,14,46, 6,38},{60,28,52,20,62,30,54,22},
+    { 3,35,11,43, 1,33, 9,41},{51,19,59,27,49,17,57,25},
+    {15,47, 7,39,13,45, 5,37},{63,31,55,23,61,29,53,21}};
+
+static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
+                    unsigned *pstride, unsigned *pres) {
+    unsigned char h[32], *line, *ras;
+    unsigned bpp, px, w, hh, res, stride, y = 0;
+    if (readn(h, 32) != 32) return 0;
+    bpp = h[0];
+    w   = (unsigned)h[12]<<24 | h[13]<<16 | h[14]<<8 | h[15];
+    hh  = (unsigned)h[16]<<24 | h[17]<<16 | h[18]<<8 | h[19];
+    res = (unsigned)h[20]<<24 | h[21]<<16 | h[22]<<8 | h[23];
+    if ((bpp != 8 && bpp != 24 && bpp != 32) || !w || !hh || !res ||
+        w > 20000 || hh > 100000) {
+        logmsg("ERROR", "URF のヘッダが不正です (bpp=%u %ux%u %udpi)", bpp, w, hh, res);
+        return -1;
+    }
+    px = bpp / 8; stride = (w + 7) / 8;
+    line = malloc((size_t)w * px);
+    ras  = calloc((size_t)stride * hh, 1);
+    if (!line || !ras) { free(line); free(ras); logmsg("ERROR", "メモリ不足"); return -1; }
+    while (y < hh) {
+        int c = fgetc(in);
+        unsigned rep, len = 0;
+        if (c == EOF) break;
+        rep = (unsigned)c + 1;
+        while (len < w) {
+            int n = fgetc(in);
+            if (n == EOF) break;
+            if (n == 128) {                         /* 行の残りは白 */
+                memset(line + (size_t)len * px, 0xff, (size_t)(w - len) * px);
+                len = w;
+            } else if (n < 128) {
+                unsigned char pix[4];
+                if (readn(pix, px) != px) break;
+                for (int i = 0; i <= n && len < w; i++, len++)
+                    memcpy(line + (size_t)len * px, pix, px);
+            } else {
+                unsigned cnt = 257 - (unsigned)n;
+                if (cnt > w - len) cnt = w - len;
+                if (readn(line + (size_t)len * px, (size_t)cnt * px) != (size_t)cnt * px) break;
+                len += cnt;
+            }
+        }
+        if (len < w) memset(line + (size_t)len * px, 0xff, (size_t)(w - len) * px);
+        for (unsigned r = 0; r < rep && y < hh; r++, y++) {
+            unsigned char *o = ras + (size_t)y * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const unsigned char *q = line + (size_t)x * px;
+                /* 8bit はグレー(0=黒)。RGB は輝度に直す */
+                unsigned g = px == 1 ? q[0] : (q[0]*299u + q[1]*587u + q[2]*114u) / 1000u;
+                if (g < BAYER8[y & 7][x & 7] * 4u + 2u)   /* 閾値 2..254。白は打たず黒は必ず打つ */
+                    o[x >> 3] |= (unsigned char)(0x80u >> (x & 7));
+            }
+        }
+    }
+    free(line);
+    *out = ras; *pw = w; *ph = hh; *pstride = stride; *pres = res;
+    return 1;
 }
 
 /* ESC T は2桁なので 99 単位ずつ送る。実際に送った量を返す */
@@ -425,13 +501,29 @@ int main(int argc, char *argv[]) {
     else if (!memcmp(magic, "2SaR", 4)) { little = 1; compressed = 1; }
     else if (!memcmp(magic, "RaS3", 4)) { little = 0; compressed = 0; }
     else if (!memcmp(magic, "3SaR", 4)) { little = 1; compressed = 0; }
-    else { logmsg("ERROR", "CUPS ラスタではありません"); return 1; }
+    else if (!memcmp(magic, "UNIR", 4)) {           /* URF: "UNIRAST\0" + ページ数 */
+        unsigned char rest[8];
+        if (readn(rest, 8) != 8 || memcmp(rest, "AST", 4)) {
+            logmsg("ERROR", "URF ではありません"); return 1; }
+        urf = 1;
+    }
+    else { logmsg("ERROR", "CUPS ラスタでも URF でもありません"); return 1; }
 
     for (;;) {
         unsigned char hdr[HDRSIZE];
         unsigned vdpi, hdpi, w, h, bpp, stride, cspace;
         unsigned bbtop, mleft, pgh, xoff = 0, yoff = 0;
         unsigned char *ras;
+        if (urf) {
+            unsigned res;
+            int r = urf_page(&ras, &w, &h, &stride, &res);
+            if (r < 0) return 1;
+            if (r == 0) break;
+            /* ページ全体のラスタ。黒=1 で作ってあるので反転しない */
+            hdpi = vdpi = res; bpp = 1; cspace = 3; bbtop = mleft = 0;
+            pgh = (unsigned)((double)h * 72.0 / res + 0.5);
+            goto page;
+        }
         if (readn(hdr, HDRSIZE) != HDRSIZE) break;
         hdpi   = rd32(hdr + 276);
         vdpi   = rd32(hdr + 280);
@@ -451,6 +543,7 @@ int main(int argc, char *argv[]) {
         if (!ras) { logmsg("ERROR", "メモリ不足"); return 1; }
         if (compressed) unrle(ras, stride, h, bpp);
         else            readn(ras, (size_t)stride * h);
+    page:
 
         if (pages == 0) {
             int lines = 0;

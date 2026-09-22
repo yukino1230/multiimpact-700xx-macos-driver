@@ -7,7 +7,7 @@ PPD が使えなくなったときに ippeveprinter で「IPP Everywhere のプ�
 
   mkippattr.py > mi700.conf
   ippeveprinter -D socket://<IP>:9100 -c .../mi700ippcmd -a mi700.conf \\
-                "MultiImpact 700XX"
+                -r _print,_universal "MultiImpact 700XX"
 
 -a と -f は同時に指定できない(-P と -c と同じく Usage を出して止まる)。
 受け付ける形式は document-format-supported としてこのファイルに書く。
@@ -102,9 +102,15 @@ def main():
     w('ATTR text printer-info "NEC MultiImpact 700XX"')
     w("")
     # 受け付ける形式。-a を使うと -f は指定できない(ippeveprinter が Usage で止まる)
-    # ので、ここに書く。PWG Raster は CUPS ラスタ v2 と同じ容器
-    w("ATTR mimeMediaType document-format-supported image/pwg-raster")
+    # ので、ここに書く。
+    # URF が無いと macOS のシステム設定は AirPrint のプリンタとして扱わず、
+    # ドライバなしでは追加できない(lpadmin -m everywhere なら追加できる)。
+    # URF を広告すると、システム設定から追加した Mac は URF で送ってくる。
+    # ippeveprinter の -r _print,_universal も必要(AirPrint のサブタイプ)
+    w("ATTR mimeMediaType document-format-supported image/pwg-raster,image/urf")
     w("ATTR mimeMediaType document-format-default image/pwg-raster")
+    # URF: 8bit グレー(W8)・160dpi(RS160)・片面(DM1)。フィルタがディザで 1bit にする
+    w("ATTR keyword urf-supported V1.4,W8,DM1,RS160,CP1,IS1-4,MT1")
     # 1bit 白黒・160dpi だけ。rastertomi700 は 1bit 以外を受け付けない
     w("ATTR keyword print-color-mode-supported monochrome")
     w("ATTR keyword print-color-mode-default monochrome")
