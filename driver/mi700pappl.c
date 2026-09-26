@@ -162,7 +162,23 @@ build_strings(void)
 }
 
 
+/* PWG 名で用紙を探す。無ければ先頭を返す */
+static const mi700_form_t *
+find_form(const char *pwg)
+{
+  int i;
+
+  for (i = 0; i < num_forms; i ++)
+    if (!strcmp(forms[i].pwg, pwg))
+      return (forms + i);
+  return (forms);
+}
+
+
 /* 給紙口: 独自の名前にすると Mac では日本語で出る(iPhone はキーワードのまま) */
+/* 接頭辞 com. を外すと、macOS(lpadmin の経路)がまるごと捨てる。
+   iPhone では "Com.mi700-feeder" のようにキーワードのまま出るが、
+   Mac では表示名のファイルで日本語になる */
 static const char * const SOURCES[] =
 {
   "com.mi700-feeder", "com.mi700-guide", "com.mi700-reartractor", "com.mi700-fronttractor"
@@ -393,13 +409,21 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   d->bin[1]      = "rear";
   d->bin_default = 0;
 
-  /* 印字可能範囲。A4 の値を既定にする(用紙ごとの余白は media_ready に入れる) */
-  d->left_right = 160;
-  d->bottom_top = 730;
+  /* PAPPL はプリンタ全体で「左右」「上下」の1組しか持てず、セット済み用紙の
+     余白はその値以上でなければならない。用紙ごとに違う余白(連続紙は上下0、
+     カット紙は上8.7mm/下7.3mm)を持たせたいので、全体は0にして
+     フチなしを許可し、実際の余白は用紙ごとに入れる */
+  d->borderless = true;
+  d->left_right = 0;
+  d->bottom_top = 0;
 
-  for (i = 0; i < d->num_source && i < num_forms; i ++)
+  /* 給紙口ごとの「セット済みの用紙」。iPhone はこの用紙しか選ばせないので、
+     カット紙の口には A4、トラクタには連続紙を入れておく
+     (ブラウザの設定画面からいつでも変更できる) */
+  for (i = 0; i < d->num_source; i ++)
   {
-    const mi700_form_t *f = forms + (i == 0 ? 0 : 0);   /* 既定は先頭(A4 など) */
+    const mi700_form_t *f = find_form(i < 2 ? "iso_a4_210x297mm" : "custom_cont10x11_254x279.4mm");
+
     papplCopyString(d->media_ready[i].size_name, f->pwg, sizeof(d->media_ready[i].size_name));
     papplCopyString(d->media_ready[i].source, SOURCES[i], sizeof(d->media_ready[i].source));
     papplCopyString(d->media_ready[i].type, "stationery", sizeof(d->media_ready[i].type));
