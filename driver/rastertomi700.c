@@ -15,6 +15,7 @@
  *   ESC e 11           文字拡大を1倍に戻す(拡大中はドット間隔も拡大されるため)
  *   ESC c 8            パラメータリセット
  */
+#include "mi700enc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -191,55 +192,8 @@ static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
     return 1;
 }
 
-/* ESC T は2桁なので 99 単位ずつ送る。実際に送った量を返す */
-static int feedto(int units) {
-    int done = 0;
-    while (units > 0) {
-        int n = units > 99 ? 99 : units;
-        printf("\033T%02d\n", n);
-        units -= n; done += n;
-    }
-    return done;
-}
-
-static void encode_page(const unsigned char *ras, unsigned w, unsigned h,
-                        unsigned stride, unsigned vdpi, int invert,
-                        unsigned xoff, unsigned yoff) {
-    unsigned char *cols = malloc((size_t)w * 3);
-    int at = 0;
-    if (!cols) return;
-    for (unsigned top = 0; top < h; top += BAND) {
-        long first = -1, last = -1;
-        for (unsigned x = 0; x < w; x++) {
-            unsigned b0 = 0, b1 = 0, b2 = 0;
-            unsigned byte = x >> 3, mask = 0x80u >> (x & 7);
-            for (unsigned k = 0; k < BAND; k++) {
-                unsigned y = top + k;
-                int bit;
-                if (y >= h) continue;
-                bit = (ras[(size_t)y * stride + byte] & mask) != 0;
-                if (invert) bit = !bit;
-                if (!bit) continue;
-                if      (k < 8)  b0 |= 1u << k;          /* バイト内は LSB が上端 */
-                else if (k < 16) b1 |= 1u << (k - 8);
-                else             b2 |= 1u << (k - 16);
-            }
-            cols[x*3] = b0; cols[x*3+1] = b1; cols[x*3+2] = b2;
-            if (b0 | b1 | b2) { if (first < 0) first = x; last = x; }
-        }
-        if (first < 0) continue;                          /* 空白バンドは送らない */
-        {   /* 縦位置は絶対値で管理する(相対送りを積むと丸め誤差が溜まる) */
-            double want = (double)(top + yoff) * TDPI / (double)vdpi;
-            at += feedto((int)(want + 0.5) - at);
-        }
-        printf("\033H\033e11");
-        printf("\033F%04ld", first + (long)xoff);
-        printf("\033H\033e11");
-        printf("\033J%04ld", last - first + 1);
-        fwrite(cols + first*3, 1, (size_t)(last - first + 1) * 3, stdout);
-        fputc('\r', stdout);
-    }
-    free(cols);
+static void out_stdout(void *ctx, const void *data, size_t len) {
+    (void)ctx; fwrite(data, 1, len, stdout);
 }
 
 /* ---- プリンタの状態を SNMP で読む -----------------------------------
@@ -485,8 +439,7 @@ int main(int argc, char *argv[]) {
     /* 給紙口: feeder=シートフィーダ(自動吸入) guide=シートガイド(手差し)
                 front=フロントトラクタ rear=リアトラクタ
        印刷品質: std-bi / std-uni / draft-bi / draft-uni / none  (Windows ドライバに合わせた) */
-    const char *source = "feeder", *eject = "front", *quality = "std-bi",
-               *kanji = "1990"; int bottom = 0;
+    mi700_job_t job;
     int is_cut, is_feeder;
     unsigned char magic[4];
     int pages = 0;
@@ -495,6 +448,8 @@ int main(int argc, char *argv[]) {
         return show_status(argc > 2 ? argv[2] : NULL);
     if (argc < 6) { logmsg("ERROR", "引数が足りません"); return 1; }
     report_status();          /* 止まる理由をプリントキューに出しておく */
+    memset(&job, 0, sizeof job);
+    job.write = out_stdout;
     /* argv[5] は "key=value key=value ..." */
     {
         char *o = strdup(argv[5]), *tok, *sp = NULL;
@@ -502,29 +457,23 @@ int main(int argc, char *argv[]) {
             char *eq = strchr(tok, '='); if (!eq) continue; *eq = 0;
             /* 標準名(InputSlot/OutputBin/OutputMode)を優先。MI700* は旧名の互換 */
             if      (!strcmp(tok, "InputSlot") ||
-                     !strcmp(tok, "MI700Source"))    source = strdup(eq+1);
+                     !strcmp(tok, "MI700Source"))    job.source = strdup(eq+1);
             else if (!strcmp(tok, "OutputBin") ||
-                     !strcmp(tok, "MI700Eject"))     eject  = strdup(eq+1);
+                     !strcmp(tok, "MI700Eject"))     job.eject  = strdup(eq+1);
             else if (!strcmp(tok, "OutputMode") ||
-                     !strcmp(tok, "MI700Quality"))   quality = strdup(eq+1);
+                     !strcmp(tok, "MI700Quality"))   job.quality = strdup(eq+1);
             else if (!strcmp(tok, "MI700Direction")) {   /* 旧オプション名の互換 */
-                quality = !strcmp(eq+1, "uni") ? "std-uni" : "std-bi";
+                job.quality = !strcmp(eq+1, "uni") ? "std-uni" : "std-bi";
             }
-            else if (!strcmp(tok, "MI700Kanji"))     kanji  = strdup(eq+1);
-            else if (!strcmp(tok, "MI700Bottom"))    bottom = atoi(eq+1);
+            else if (!strcmp(tok, "MI700Kanji"))     job.kanji  = strdup(eq+1);
+            else if (!strcmp(tok, "MI700Bottom"))    job.bottom = atoi(eq+1);
             else if (!strcmp(tok, "MI700Color"))     bilevel = strcmp(eq+1, "gray") != 0;
         }
     }
-    /* 値の名前の正規化。reartractor/fronttractor は IPP 標準キーワード(rear)と
-       衝突して macOS に訳語を差し替えられるのを避けるための名前 */
-    if (!strcmp(source, "cut"))          source = "feeder";   /* 旧オプション値の互換 */
-    if (!strcmp(source, "reartractor"))  source = "rear";
-    if (!strcmp(source, "fronttractor")) source = "front";
-    if (strcmp(source,"feeder") && strcmp(source,"guide") &&
-        strcmp(source,"rear")   && strcmp(source,"front")) source = "feeder";
-    if (strcmp(eject,"front") && strcmp(eject,"rear")) eject = "front";
-    is_feeder = !strcmp(source, "feeder");
-    is_cut    = is_feeder || !strcmp(source, "guide");
+    mi700_begin(&job);
+    is_feeder = job.is_feeder;
+    is_cut    = job.is_cut;
+    (void)is_cut; (void)is_feeder;
 
     in = (argc > 6) ? fopen(argv[6], "rb") : stdin;
     if (!in) { logmsg("ERROR", "入力を開けません"); return 1; }
@@ -578,78 +527,10 @@ int main(int argc, char *argv[]) {
         else            readn(ras, (size_t)stride * h);
     page:
 
-        if (pages == 0) {
-            int lines = 0;
-            /* 順序と同期点は Windows ドライバのキャプチャに合わせる。
-               ESC m は用紙の退避などの機械的動作を伴うため、直後に EM で同期しないと
-               後続の設定が動作中に届き、給紙後に停止する(SEL等が点滅する)。
-                 品質 → 漢字表 → 拡大解除 → 給紙口 → EM → 排出方向 → 用紙長 → CR
-                 → 吸入(ESC a) → EM → CR                                            */
-            /* メモリスイッチで初期値が変わる項目は必ず明示する。
-               「工場設定と同じだから省く」は誤り(初期状態表の【】は工場設定であって
-               この機体の設定ではない)。特に:
-                 ESC M    ネイティブモード。コピーモードだと ESC T の単位が1/120→1/160になる
-                 ESC /136 ライトマージン。080 のままだと 1280ドットを超えた時点で
-                          「印刷範囲を超えて印字」エラーになり、点滅して停止する
-                 ESC L000 レフトマージン
-                 ESC f    順方向改行 */
-            /* 前のジョブが異常終了して残った印刷データを捨てる。Windows ドライバも
-               初期化の先頭で送っている。ESC c8 は末尾で送っているので正常終了なら
-               状態は初期化済みだが、中断された場合の保険 */
-            fputc(0x18, stdout);                          /* CAN */
-            fputs("\033M", stdout);
-            fputs("\033/136", stdout);
-            fputs("\033L000", stdout);
-            fputs("\033f", stdout);
-            if (strcmp(quality, "none")) {
-                fputs(strncmp(quality, "draft", 5) ? "\033d1" : "\033d0", stdout);
-                fputs(strstr(quality, "uni") ? "\033>" : "\033]", stdout);
-            }
-            printf("\034" "05F2-%s", !strcmp(kanji,"1978") ? "00"
-                                   : !strcmp(kanji,"1983") ? "01" : "02");
-            fputs("\033e11", stdout);
-            fputs("\033\"", stdout);                       /* 強調印刷モード解除 */
-            fputs("\033Y", stdout);                        /* ライン印刷モード解除 */
-            printf("\033m%c", !strcmp(source,"front") ? '1' : is_cut ? '2' : '3');
-            fputc(0x19, stdout);                          /* EM: 給紙口切替の完了を待つ */
-            if (is_cut) {
-                fputs(!strcmp(eject,"rear") ? "\034" "02EF" : "\034" "02ER", stdout);
-                /* カット紙の用紙長 FS 05v。単位 1/120 インチ + 300(2.5インチ)。
-                   送らないと本体の工場設定(66行=11インチ)で判断され停止する。
-                   どちらのマニュアルにも無いが、Windows のキャプチャ2つで裏が取れている:
-                     連続紙  540 = 4.5インチ ちょうど(オフセットなし)
-                     カット紙 1703 = 11.69インチ(A4) + 2.5インチ
-                   **用紙の長さ**であってラスタの高さではない。ラスタは印字可能範囲ぶんしか
-                   無いので、それを使うと上下の余白のぶん(A4 で16mm)短くなる */
-                {
-                    double plen = pgh ? (double)pgh / 72.0 * 120.0
-                                      : (double)h / vdpi * 120.0;
-                    int v = (int)(plen + 0.5) + 300;
-                    if (v >= 1 && v <= 9999) printf("\034" "05v%04d", v);
-                    else logmsg("WARNING", "用紙長 %d は範囲外のため送りません", v);
-                    lines = v;
-                }
-            } else {                                      /* 連続紙は簡易VFU(行数) */
-                /* カット紙と同じく**用紙の長さ**から出す。ミシン目回避の用紙は
-                   上下25.4mmずつ印字不可なので、ラスタの高さだと2インチ短くなり
-                   改ページのたびに2インチずつずれていく */
-                double plen = pgh ? (double)pgh / 72.0 : (double)h / vdpi;
-                lines = (int)(plen * LINE_INCH + 0.5);
-                if (lines >= 1 && lines <= 99) {
-                    if (bottom > 0 && bottom <= lines - 2) printf("\033v%02d,%02d.", lines, bottom);
-                    else                                   printf("\033v%02d.", lines);
-                } else { logmsg("WARNING", "用紙長 %d 行は範囲外のため送りません", lines); lines = 0; }
-            }
-            fputc('\r', stdout);
-            if (is_feeder) fputs("\033a", stdout);        /* 全排出後全吸入 */
-            fputc(0x19, stdout);                          /* EM: 給紙の完了を待つ */
-            fputc('\r', stdout);
+        mi700_page_begin(&job, h, vdpi, pgh);
+        if (pages == 0)
             logmsg("DEBUG", "source=%s eject=%s quality=%s bottom=%d %udpi lines=%d",
-                   source, eject, quality, bottom, vdpi, lines);
-        } else {
-            /* 次ページ: フィーダは排出して次を吸入、手差しは排出のみ、連続紙は改ページ */
-            fputs(is_feeder ? "\033a" : is_cut ? "\033b" : "\014", stdout);
-        }
+                   job.source, job.eject, job.quality, job.bottom, vdpi, job.lines);
         logmsg("DEBUG", "ページ%d: %ux%u ドット", pages + 1, w, h);
         /* CUPS ラスタ(cgpdftoraster)は印字可能範囲ぶんしか無いのでずらし戻す。
            PWG Raster(IPP Everywhere)はページ全体がラスタになっていて、
@@ -665,12 +546,12 @@ int main(int argc, char *argv[]) {
         }
         if (xoff || yoff)
             logmsg("DEBUG", "印字可能範囲のオフセット: 左%uドット 上%uドット", xoff, yoff);
-        encode_page(ras, w, h, stride, vdpi, cspace == 0, xoff, yoff);
+        mi700_page_bits(&job, ras, w, h, stride, vdpi, cspace == 0, xoff, yoff);
         free(ras);
         pages++;
     }
     if (!pages) { logmsg("ERROR", "ページがありません"); return 1; }
-    fputs(is_cut ? "\r\033b\033c8" : "\r\014\033c8", stdout);
+    mi700_end(&job);
     fflush(stdout);
     /* 終わりにもう一度調べて状態を更新する。開始時に「用紙なし」だったまま
        片付けないと、ippeveprinter はそれを持ち続け、iPhone は「用紙がセット

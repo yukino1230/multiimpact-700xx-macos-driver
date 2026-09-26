@@ -27,7 +27,7 @@ mkdir -p "$ROOT/usr/local/libexec/cups/filter" "$ROOT/usr/local/bin" \
 
 echo "==> CUPS フィルタをビルド(ユニバーサル)"
 clang -O2 -Wall -arch arm64 -arch x86_64 \
-      -o "$ROOT/usr/local/libexec/cups/filter/rastertomi700" "$HERE/rastertomi700.c"
+      -o "$ROOT/usr/local/libexec/cups/filter/rastertomi700" "$HERE/rastertomi700.c" "$HERE/mi700enc.c"
 chmod 755 "$ROOT/usr/local/libexec/cups/filter/rastertomi700"
 
 FILTER="$ROOT/usr/local/libexec/cups/filter/rastertomi700"
