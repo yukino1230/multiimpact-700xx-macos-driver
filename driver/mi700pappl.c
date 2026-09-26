@@ -363,7 +363,10 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   d->ppm               = 4;
   d->format            = "application/octet-stream";   /* 変換済みの 201PL */
   d->printfile_cb      = mi700_printfile;
-  d->raster_types      = PAPPL_PWG_RASTER_TYPE_BLACK_1 | PAPPL_PWG_RASTER_TYPE_SGRAY_8;
+  /* 8bit グレーだけを受け取る。black_1 も受け取ると、クライアントが自分で
+     1bit にしてしまい、用紙の種類(白黒/写真)の切り替えが効かなくなる */
+  d->raster_types      = PAPPL_PWG_RASTER_TYPE_SGRAY_8;
+  d->force_raster_type = PAPPL_PWG_RASTER_TYPE_SGRAY_8;
   d->color_supported   = PAPPL_COLOR_MODE_MONOCHROME;
   d->color_default     = PAPPL_COLOR_MODE_MONOCHROME;
   d->orient_default    = IPP_ORIENT_NONE;
