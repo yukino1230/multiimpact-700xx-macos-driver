@@ -42,6 +42,10 @@ void mi700_page_bits(mi700_job_t *j, const unsigned char *bits,
                      unsigned w, unsigned h, unsigned stride, unsigned vdpi,
                      int invert, unsigned xoff, unsigned yoff);
 
+/* グレー(0=黒)の1画素を打つか。bilevel=1 なら半分を境に、0 ならディザ */
+int  mi700_dot(unsigned gray, unsigned x, unsigned y, int bilevel);
+void mi700_tone_init(void);
+
 /* ジョブの末尾(排出とパラメータリセット) */
 void mi700_end(mi700_job_t *j);
 

@@ -33,6 +33,7 @@
 
 static FILE *in;
 static int   little, compressed, urf;
+static int   bilevel = 1;   /* 白黒(1) かグレースケール(0) か */
 
 static void logmsg(const char *lv, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -98,37 +99,6 @@ static int unrle(unsigned char *out, unsigned stride, unsigned height, unsigned 
  *     129..255 続く 257-n 画素をそのまま
  * ページ全体がラスタになっている(PWG Raster と同じ)。
  * 白黒なら半分を境に 1bit に、グレースケールなら 8x8 の組織的ディザで 1bit にする。 */
-static const unsigned char BAYER8[8][8] = {
-    { 0,32, 8,40, 2,34,10,42},{48,16,56,24,50,18,58,26},
-    {12,44, 4,36,14,46, 6,38},{60,28,52,20,62,30,54,22},
-    { 3,35,11,43, 1,33, 9,41},{51,19,59,27,49,17,57,25},
-    {15,47, 7,39,13,45, 5,37},{63,31,55,23,61,29,53,21}};
-
-/* ドットゲインの補正。ドットインパクトは1点が広がって隣とつながるので、
- * 点を半分打った時点でほぼ塗りつぶしに見える。実測(A4、2026-09-22):
- *   打った割合  10  20  30  40  50  60  70  80  90 %
- *   紙の濃さ    12  24  34  44  49  51  53  54  56 %
- * 指定した濃さに比例した濃さが出るよう、打つ割合を逆算する表を作る。
- * 黒(100%)は必ず全部打つ。
- * 白黒(bilevel)のときは補正もディザもせず、半分を境に打つか打たないかだけ決める。
- * iPhone は黒い文字を値 69 の一色で送ってくるので、グレーで刷ると網点になる */
-static unsigned char TONE[256];
-/* 白黒(1) かグレースケール(0) か。IPP の print-color-mode (bi-level / monochrome)
-   から mi700ippcmd が MI700Color=bilevel|gray で渡す。ドライバが中身を見て
-   白黒かグレーかを推測することはしない */
-static int bilevel = 1;
-static void tone_init(void) {
-    static const double C[] = {0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1};
-    static const double D[] = {0, .12, .24, .34, .44, .49, .51, .53, .54, .56, .58};
-    for (int i = 0; i < 256; i++) {
-        double want = D[10] * i / 255.0, c = 1.0;
-        for (int k = 1; k <= 10; k++)
-            if (want <= D[k]) { c = C[k-1] + (C[k]-C[k-1]) * (want-D[k-1]) / (D[k]-D[k-1]); break; }
-        TONE[i] = (unsigned char)(c * 255.0 + 0.5);
-    }
-    TONE[255] = 255;
-}
-
 static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
                     unsigned *pstride, unsigned *pres) {
     unsigned char h[32], *line, *ras;
@@ -177,13 +147,8 @@ static int urf_page(unsigned char **out, unsigned *pw, unsigned *ph,
                 const unsigned char *q = line + (size_t)x * px;
                 /* 8bit はグレー(0=黒)。RGB は輝度に直す */
                 unsigned g = px == 1 ? q[0] : (q[0]*299u + q[1]*587u + q[2]*114u) / 1000u;
-                int dot;
-                if (bilevel) dot = g < 128;                /* 白黒: 半分より暗ければ打つ */
-                else {                                     /* グレー: 濃さを打つ割合に直してディザ */
-                    g = 255u - TONE[255u - g];
-                    dot = g < BAYER8[y & 7][x & 7] * 4u + 2u;   /* 閾値 2..254 */
-                }
-                if (dot) o[x >> 3] |= (unsigned char)(0x80u >> (x & 7));
+                if (mi700_dot(g, x, y, bilevel))
+                    o[x >> 3] |= (unsigned char)(0x80u >> (x & 7));
             }
         }
     }
@@ -487,7 +452,7 @@ int main(int argc, char *argv[]) {
         if (readn(rest, 8) != 8 || memcmp(rest, "AST", 4)) {
             logmsg("ERROR", "URF ではありません"); return 1; }
         urf = 1;
-        tone_init();
+        mi700_tone_init();
     }
     else { logmsg("ERROR", "CUPS ラスタでも URF でもありません"); return 1; }
 

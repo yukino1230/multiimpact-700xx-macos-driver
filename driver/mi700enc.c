@@ -22,6 +22,45 @@
 #define TDPI      120      /* ESC T の単位 1/120 inch */
 #define LINE_INCH   6      /* 簡易VFU の1行 = 1/6 inch */
 
+static const unsigned char BAYER8[8][8] = {
+    { 0,32, 8,40, 2,34,10,42},{48,16,56,24,50,18,58,26},
+    {12,44, 4,36,14,46, 6,38},{60,28,52,20,62,30,54,22},
+    { 3,35,11,43, 1,33, 9,41},{51,19,59,27,49,17,57,25},
+    {15,47, 7,39,13,45, 5,37},{63,31,55,23,61,29,53,21}};
+
+/* ドットゲインの補正。ドットインパクトは1点が広がって隣とつながるので、
+ * 点を半分打った時点でほぼ塗りつぶしに見える。実測(A4、2026-09-22):
+ *   打った割合  10  20  30  40  50  60  70  80  90 %
+ *   紙の濃さ    12  24  34  44  49  51  53  54  56 %
+ * 指定した濃さに比例した濃さが出るよう、打つ割合を逆算する表を作る。
+ * 黒(100%)は必ず全部打つ。
+ * 白黒(bilevel)のときは補正もディザもせず、半分を境に打つか打たないかだけ決める。
+ * iPhone は黒い文字を値 69 の一色で送ってくるので、グレーで刷ると網点になる */
+static unsigned char TONE[256];
+static int tone_ready;
+void mi700_tone_init(void) {
+    tone_ready = 1;
+    static const double C[] = {0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1};
+    static const double D[] = {0, .12, .24, .34, .44, .49, .51, .53, .54, .56, .58};
+    for (int i = 0; i < 256; i++) {
+        double want = D[10] * i / 255.0, c = 1.0;
+        for (int k = 1; k <= 10; k++)
+            if (want <= D[k]) { c = C[k-1] + (C[k]-C[k-1]) * (want-D[k-1]) / (D[k]-D[k-1]); break; }
+        TONE[i] = (unsigned char)(c * 255.0 + 0.5);
+    }
+    TONE[255] = 255;
+}
+
+
+/* グレー(0=黒)の1画素を打つかどうか。bilevel なら半分を境に、
+ * グレースケールならドットゲイン補正付きの 8x8 組織的ディザ */
+int mi700_dot(unsigned gray, unsigned x, unsigned y, int bilevel) {
+    if (bilevel) return gray < 128;
+    if (!tone_ready) mi700_tone_init();
+    gray = 255u - TONE[255u - (gray & 255u)];
+    return gray < BAYER8[y & 7][x & 7] * 4u + 2u;
+}
+
 static void put(mi700_job_t *j, const char *s) { j->write(j->ctx, s, strlen(s)); }
 static void putb(mi700_job_t *j, int c) { unsigned char b = (unsigned char)c; j->write(j->ctx, &b, 1); }
 
