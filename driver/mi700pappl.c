@@ -21,6 +21,11 @@
 #include <unistd.h>
 
 #define MAX_FORMS  PAPPL_MAX_MEDIA
+/* キューごとのボトム領域(印刷ダイアログには出ない。ブラウザの設定画面で選ぶ) */
+#define BOTTOM_OPT "mi700-bottom-region"
+/* 設定画面のフッタ(NULL にすると PAPPL が落ちる。main のコメント参照) */
+#define FOOTER     "<a href=\"https://github.com/yukino1230/multiimpact-700xx-macos-driver\">"\
+                   "MultiImpact 700XX を macOS から使う</a>"
 
 typedef struct                          /* forms.conf の1行 */
 {
@@ -145,6 +150,11 @@ build_strings(void)
                   "\"media-type.stationery\" = \"普通紙 (白黒)\";\n"
                   "\"media-type.photographic\" = \"写真 (グレースケール)\";\n"
                   "\"media-type.com.mi700-perforation\" = \"ミシン目回避 (連続紙)\";\n"
+                  /* キューごとの設定(ブラウザの設定画面に出る) */
+                  "\"" BOTTOM_OPT "\" = \"ミシン目回避 (ボトム領域)\";\n"
+                  "\"" BOTTOM_OPT ".none\" = \"なし\";\n"
+                  "\"" BOTTOM_OPT ".half-inch\" = \"12.7mm (3行)\";\n"
+                  "\"" BOTTOM_OPT ".one-inch\" = \"25.4mm (6行・規格推奨)\";\n"
                   "\"media-source.com.mi700-feeder\" = \"シートフィーダ (自動吸入)\";\n"
                   "\"media-source.com.mi700-guide\" = \"シートガイド (手差し)\";\n"
                   "\"media-source.com.mi700-reartractor\" = \"リアトラクタ (連続紙)\";\n"
@@ -162,7 +172,7 @@ build_strings(void)
 }
 
 
-/* PWG 名で用紙を探す。無ければ先頭を返す */
+/* PWG 名で用紙を探す */
 static const mi700_form_t *
 find_form(const char *pwg)
 {
@@ -171,9 +181,35 @@ find_form(const char *pwg)
   for (i = 0; i < num_forms; i ++)
     if (!strcmp(forms[i].pwg, pwg))
       return (forms + i);
-  return (forms);
+  return (NULL);
 }
 
+/* 見つからなければ先頭(セット済み用紙を決めるときに使う) */
+static const mi700_form_t *
+find_form_or_first(const char *pwg)
+{
+  const mi700_form_t *f = find_form(pwg);
+
+  return (f ? f : forms);
+}
+
+/* ボトム領域(1/100mm) → 行数(1行 = 1/6インチ) */
+static int
+bottom_lines(int hundredths)
+{
+  return ((hundredths * 6 + 1270) / 2540);
+}
+
+
+/* 用紙ごとの余白について。
+   PAPPL が広告する media-col-database は、プリンタ全体の「上下」「左右」1組から
+   作られる(printer-driver.c)。この機体の余白は左右・上下が非対称(カット紙は
+   左1.6/右11.0/上8.7/下7.3mm)なので表現できず、フチなし扱いで 0 になる。
+   自分で media-col-database を足すこともできるが、PAPPL の生成分と重複し、
+   クライアントは先に出てくる PAPPL 側(0)を読むので意味がない。
+   用紙ごとの正しい余白が伝わるのは給紙口ごとの「セット済みの用紙」だけで、
+   iPhone はそこからしか選ばないので実害はない。Mac でセットしていない用紙を
+   選ぶと余白 0 として描かれる(右端が印字範囲から外れることがある) */
 
 /* 給紙口: 独自の名前にすると Mac では日本語で出る(iPhone はキーワードのまま) */
 /* 接頭辞 com. を外すと、macOS(lpadmin の経路)がまるごと捨てる。
@@ -256,11 +292,33 @@ mi700_rstartjob(pappl_job_t *job, pappl_pr_options_t *options, pappl_device_t *d
                      options->print_quality == IPP_QUALITY_HIGH  ? "std-uni"  : "std-bi";
   ctx->job.write   = dev_write;
   ctx->job.ctx     = device;
-  /* 用紙の種類で白黒かグレースケールかを決める(印刷ダイアログに出る唯一の項目)。
-     ミシン目回避はボトム領域として本体に送る */
+  /* 用紙の種類で白黒かグレースケールかを決める(印刷ダイアログに出る唯一の項目) */
   ctx->bilevel     = strstr(options->media.type, "photographic") == NULL;
-  if (strstr(options->media.type, "perforation"))
-    ctx->job.bottom = 6;                /* 6行 = 25.4mm */
+
+  /* ミシン目回避(ボトム領域)は連続紙だけ。次の3つのうち大きいほうを採る:
+       - キューの設定(ブラウザの設定画面。印刷ダイアログを触らずに済む)
+       - 用紙の種類「ミシン目回避」(iPhone からも選べる)
+       - セット済みの用紙の下の余白(forms.conf の「(ミシン目回避)」の用紙) */
+  if (!strcmp(ctx->job.source, "rear") || !strcmp(ctx->job.source, "front"))
+  {
+    const char *v = cupsGetOption(BOTTOM_OPT, options->num_vendor, options->vendor);
+    int         b = 0;
+
+    if (v && !strcmp(v, "one-inch"))
+      b = 6;                            /* 6行 = 25.4mm */
+    else if (v && !strcmp(v, "half-inch"))
+      b = 3;
+    if (strstr(options->media.type, "perforation") && b < 6)
+      b = 6;
+    /* セットした用紙が下に余白を持っているなら、その分も本体に伝える
+       (forms.conf の「(ミシン目回避)」の用紙は上下 25.4mm を空けてある)。
+       用紙の名前では判別できない: 10x11インチのように PWG の標準名と寸法が
+       一致する用紙は、独自の名前を送っても標準名に読み替えられてしまう */
+    if (options->media.bottom_margin >= 1270 &&      /* 半インチ以上のときだけ */
+        bottom_lines(options->media.bottom_margin) > b)
+      b = bottom_lines(options->media.bottom_margin);
+    ctx->job.bottom = b;
+  }
 
   mi700_begin(&ctx->job);
   papplJobSetData(job, ctx);
@@ -371,8 +429,16 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
              const char *device_id, pappl_pr_driver_data_t *d, ipp_t **attrs, void *data)
 {
   int i;
+  static const char * const bottoms[] = { "none", "half-inch", "one-inch" };
+  /* キューの種類。連続紙のキューは既定の給紙口をリアトラクタにし、セット済みの
+     用紙も連続紙にする。ミシン目回避のキューは上下 25.4mm を空けた用紙にして、
+     ボトム領域も既定で送る(印刷ダイアログを何も触らずに済む) */
+  int         perf = driver_name && strstr(driver_name, "perf") != NULL;
+  int         cont = perf || (driver_name && strstr(driver_name, "cont") != NULL);
+  const char *contform = perf ? "custom_cont10x11m_254x279.4mm"
+                              : "custom_cont10x11_254x279.4mm";
 
-  (void)system; (void)driver_name; (void)device_uri; (void)device_id; (void)attrs; (void)data;
+  (void)system; (void)device_uri; (void)device_id; (void)data;
 
   papplCopyString(d->make_and_model, "NEC MultiImpact 700XX", sizeof(d->make_and_model));
   d->kind              = PAPPL_KIND_DOCUMENT;
@@ -422,7 +488,7 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
      (ブラウザの設定画面からいつでも変更できる) */
   for (i = 0; i < d->num_source; i ++)
   {
-    const mi700_form_t *f = find_form(i < 2 ? "iso_a4_210x297mm" : "custom_cont10x11_254x279.4mm");
+    const mi700_form_t *f = find_form_or_first(i < 2 ? "iso_a4_210x297mm" : contform);
 
     papplCopyString(d->media_ready[i].size_name, f->pwg, sizeof(d->media_ready[i].size_name));
     papplCopyString(d->media_ready[i].source, SOURCES[i], sizeof(d->media_ready[i].source));
@@ -434,7 +500,23 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
     d->media_ready[i].top_margin    = f->top;
     d->media_ready[i].bottom_margin = f->bottom;
   }
-  d->media_default = d->media_ready[0];
+  /* 既定の給紙口。連続紙のキューはリアトラクタ(SOURCES[2]) */
+  d->media_default = d->media_ready[cont ? 2 : 0];
+
+  /* キューごとの設定。印刷ダイアログには出せない(CUPS が独自の -o を捨てるのは
+     実測済み)が、ブラウザの設定画面で選べる。連続紙のキューを作って一度選んで
+     おけば、iPhone からは何も触らずにミシン目回避で印刷できる */
+  d->vendor[d->num_vendor ++] = BOTTOM_OPT;
+  if (attrs)
+  {
+    if (!*attrs)
+      *attrs = ippNew();
+    ippAddStrings(*attrs, IPP_TAG_PRINTER, IPP_CONST_TAG(IPP_TAG_KEYWORD),
+                  BOTTOM_OPT "-supported",
+                  (int)(sizeof(bottoms) / sizeof(bottoms[0])), NULL, bottoms);
+    ippAddString(*attrs, IPP_TAG_PRINTER, IPP_CONST_TAG(IPP_TAG_KEYWORD),
+                 BOTTOM_OPT "-default", NULL, perf ? "one-inch" : "none");
+  }
 
   d->rstartjob_cb  = mi700_rstartjob;
   d->rstartpage_cb = mi700_rstartpage;
@@ -445,9 +527,13 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   return (true);
 }
 
+/* キューを作るときに選ぶ。違いは既定の給紙口とセット済みの用紙だけで、
+   印刷のたびにどの給紙口も選べる */
 static pappl_pr_driver_t mi700_drivers[] =
 {
-  { "mi700", "NEC MultiImpact 700XX", NULL, NULL }
+  { "mi700",      "NEC MultiImpact 700XX (単票)",                 NULL, NULL },
+  { "mi700-cont", "NEC MultiImpact 700XX (連続紙)",               NULL, NULL },
+  { "mi700-perf", "NEC MultiImpact 700XX (連続紙・ミシン目回避)", NULL, NULL }
 };
 
 
@@ -455,6 +541,10 @@ static pappl_system_t *
 mi700_system(int num_options, cups_option_t *options, void *data)
 {
   pappl_system_t *system;
+  /* 設定画面にパスワードを要求させる場合だけ指定する(既定は誰でも開ける)。
+       -o auth-service=other -o admin-group=admin */
+  const char     *auth  = cupsGetOption("auth-service", num_options, options);
+  const char     *group = cupsGetOption("admin-group", num_options, options);
 
   (void)data;
 
@@ -466,9 +556,12 @@ mi700_system(int num_options, cups_option_t *options, void *data)
                              "_print,_universal",
                              cupsGetOption("spool-directory", num_options, options),
                              cupsGetOption("log-file", num_options, options),
-                             PAPPL_LOGLEVEL_INFO, /*auth_service*/NULL, /*tls_only*/false);
+                             PAPPL_LOGLEVEL_INFO, auth, /*tls_only*/false);
   if (!system)
     return (NULL);
+
+  if (group)
+    papplSystemSetAdminGroup(system, group);
 
   papplSystemSetPrinterDrivers(system, (int)(sizeof(mi700_drivers) / sizeof(mi700_drivers[0])),
                                mi700_drivers, /*autoadd_cb*/NULL, /*create_cb*/NULL,
@@ -492,7 +585,10 @@ main(int argc, char *argv[])
   }
   build_strings();
 
-  return (papplMainloop(argc, argv, "4.0", /*footer_html*/NULL,
+  /* フッタを必ず渡すこと。PAPPL 1.4.12 は footer_html が NULL のまま
+     papplClientGetLocString(client, NULL) を呼び、strcmp(NULL) で落ちる
+     (設定画面を開くたびにサーバが死ぬ。KeepAlive で起き直すので気付きにくい) */
+  return (papplMainloop(argc, argv, "4.0", FOOTER,
                         (int)(sizeof(mi700_drivers) / sizeof(mi700_drivers[0])), mi700_drivers,
                         /*autoadd_cb*/NULL, mi700_driver,
                         /*subcmd_name*/NULL, /*subcmd_cb*/NULL,
