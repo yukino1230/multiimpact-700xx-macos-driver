@@ -11,8 +11,13 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
 **iPhone / iPad からも印刷できる試験版 [v4.0-beta1](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta1)** もあります。
 PPD を使わずに AirPrint のプリンタとして常駐させる版で、[`ipp-everywhere` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/ipp-everywhere)で開発しています。
 
+さらに先の実験として、**[PAPPL](https://www.msweet.org/pappl/) でプリンタアプリケーションを書いた版**を
+[`pappl` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/pappl)に置いています
+（給紙口やミシン目回避が日本語で出ます。詳しくは「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」）。
+
 > Current release: **v3.4**. A beta, **v4.0-beta1**, adds printing from iPhone/iPad and driverless Macs
 > by running the printer as an AirPrint (IPP Everywhere) service without a PPD (`ipp-everywhere` branch).
+> The `pappl` branch goes further with a PAPPL-based Printer Application.
 
 **ドットインパクトプリンタ**は複写伝票や連続紙の印刷に今も使われていますが、
 メーカーは macOS 用のドライバを出していません。「Mac から印刷できない」
@@ -631,6 +636,10 @@ AirPrint でも見せています。同じ方法を試しました。
 限られます。ミシン目回避が要る連続紙は、ドライバ（PPD）を入れた Mac から印刷してください。
 同じ `mi700ipp` のサーバ経由でも、PPD が選ばれていれば今までどおり使えます。
 
+**この2つは、表示名のファイルを自分で配れば解決します。** `ippeveprinter` では配れませんが、
+PAPPL で自前のプリンタアプリケーションを書くと配れます（下の
+「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」）。
+
 #### 「アプリを入れれば AirPrint のまま独自の設定が出せる」という説明について
 
 AI やネットの記事で、次のような説明を見かけることがあります。**2026年9月、macOS 27 で確かめた限りでは、どれもこのプリンタには当てはまりません。**
@@ -667,6 +676,104 @@ AirPrint のまま独自の機能を扱う方法は、次の2つだけでした�
 - **用紙サイズは `media-ready`（セット済みの用紙）からしか選べません。** 属性ファイルで A4 だけを
   セット済みにしていたら、iPhone では A4 しか出てきませんでした。全用紙を載せています
 - 黒い文字は値 69 のグレーで届きます（上の「白黒 / グレースケール」を参照）
+
+### PAPPL で作ったプリンタアプリケーション（`pappl` ブランチ）
+
+`ippeveprinter` で足りないところ（表示名のファイルを配れない・キューごとの設定を持てない）は、
+**[PAPPL](https://www.msweet.org/pappl/)** で自前のプリンタアプリケーションを書くと埋まります。
+[`driver/mi700pappl.c`](driver/mi700pappl.c)（`pappl` ブランチ）がそれで、201PL の組み立ては
+CUPS フィルタと共用しています（[`driver/mi700enc.c`](driver/mi700enc.c)）。用紙は同じ `forms.conf` から読みます。
+
+```bash
+# PAPPL を用意する（Homebrew には無いのでソースから）
+curl -LO https://github.com/michaelrsweet/pappl/releases/download/v1.4.12/pappl-1.4.12.tar.gz
+tar xzf pappl-1.4.12.tar.gz
+(cd pappl-1.4.12 && ./configure --disable-shared --disable-libjpeg --disable-libpng && make)
+driver/build-pappl.sh pappl-1.4.12
+
+# 常駐させる（給紙口ごとにキューを作る）
+driver/mi700app add 192.168.1.160 "MultiImpact 700XX 単票" --source feeder
+driver/mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙" --source rear
+driver/mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙 ミシン目回避" --source rear --perforation
+driver/mi700app list
+```
+
+- `sudo` 付きなら LaunchDaemon、なしなら LaunchAgent（`mi700ipp` と同じ）。既定のポートは 8632 です
+- 設定画面は `http://localhost:8632/`。キューごとの既定値やセット済みの用紙を変えられます
+- OpenSSL は静的にリンクするので、Homebrew に依存しない実行ファイルになります（PAPPL は TLS に
+  OpenSSL か GnuTLS を要求し、macOS の Security.framework は使えません）。ただしビルドした CPU 向けです
+
+#### 取り戻せたもの
+
+| | `ippeveprinter` 版 | PAPPL 版 |
+|---|---|---|
+| 表示名のファイル（`printer-strings-uri`） | 捨てられる | **配れる** |
+| 用紙の種類 | OS の訳語だけ（便箋・写真） | **普通紙 (白黒)・写真 (グレースケール)・ミシン目回避 (連続紙)** |
+| 給紙口 | 標準キーワードに割り当て（主トレイ・手差し…） | **シートフィーダ (自動吸入)** など（Mac。iPhone は後述） |
+| 用紙名 | 標準以外は寸法だけ（`10 x 11`） | **`forms.conf` の表示名** |
+| ボトム領域 | 出せない | **キューごとに設定画面で選べる**（なし / 12.7mm / 25.4mm） |
+| キューの数 | 1プロセスに1台 | 1サーバに何台でも |
+
+#### iPhone に出せる文字列はここまで
+
+iPhone の「プリンタオプション」で表示名のファイルを見てくれたのは**用紙の種類**だけでした。
+
+| iPhone に出るもの | 表示 |
+|---|---|
+| 用紙の種類 | **表示名のファイルどおり**（ミシン目回避 (連続紙) も出る） |
+| 給紙口 | **`Com.mi700-feeder` のようにキーワードのまま** |
+| 用紙サイズ | セット済みの用紙だけ（表示は OS 任せ） |
+| **プリンタ名** | **そのまま**（日本語もそのまま出る） |
+
+給紙口のキーワードから `com.` を外すと macOS がまるごと捨てるので、この形は変えられません。
+そこで **給紙口ごとにキューを分け、名前を日本語にする**のが iPhone からはいちばん分かりやすい形でした。
+プリンタを選んだ時点で給紙口・用紙・ボトム領域が決まるので、オプションを触らずに済みます。
+キューの種類は3つあります（`mi700app add` の `--source` と `--perforation` で選ぶ。あとから設定画面でも変えられます）。
+
+| キューの種類 | 既定の給紙口 | セット済みの用紙 | ボトム領域 |
+|---|---|---|---|
+| `mi700`（単票） | シートフィーダ | A4 | なし |
+| `mi700-cont`（連続紙） | リアトラクタ | 連続紙 10x11インチ | なし |
+| `mi700-perf`（連続紙・ミシン目回避） | リアトラクタ | 連続紙 10x11インチ (ミシン目回避) | **25.4mm（6行）** |
+
+ミシン目回避は次のどれかで効きます（いちばん大きい値を使います）。
+
+- キューの設定（設定画面の「ミシン目回避 (ボトム領域)」）
+- 用紙の種類「ミシン目回避 (連続紙)」（iPhone からも選べる）
+- セット済みの用紙が下に半インチ以上の余白を持っている（`forms.conf` の「(ミシン目回避)」の用紙）
+
+連続紙の用紙長とボトム領域は `ESC v66,06.`（66行 = 11インチ・ボトム 6行）として送られます。
+
+#### PAPPL で分かったこと
+
+- **自前の初期化（system callback）を使うなら `papplSystemAddListeners()` を自分で呼ぶこと。**
+  呼ばないと UNIX ドメインソケットだけになり、ネットワークから見えません
+- **フッタの HTML を渡さないと落ちます。** PAPPL 1.4.12 は `footer_html` が `NULL` のまま
+  `papplClientGetLocString(client, NULL)` を呼び、`strcmp(NULL)` で落ちます。設定画面を開くたびに
+  サーバが死に、`KeepAlive` がすぐ起こし直すので「ページが途中で切れる」ようにしか見えません
+- **`black_1` を広告すると、クライアントが自分で 1bit にしてしまいます。** 白黒とグレーの
+  切り替えをこちらで決めるには `sgray_8` だけを受け取ること
+- **用紙ごとの余白は「セット済みの用紙」にしか乗りません。** PAPPL が持てるのはプリンタ全体の
+  「上下」「左右」1組だけで、この機体のような非対称な余白（左1.6 / 右11.0 / 上8.7 / 下7.3mm）は
+  表現できません。`media-col-database` を自分で足すこともできますが、PAPPL の生成分と**属性が重複**し、
+  クライアントは先に出てくる PAPPL 側（余白 0）を読むので意味がありませんでした。
+  iPhone はセット済みの用紙からしか選ばないので実害はありませんが、**Mac でセットしていない用紙を
+  選ぶと余白 0 として描かれます**（右端が印字範囲から外れることがあります）
+- 設定画面の「メディア」で用紙を変えると、**余白が 0 になります**（同じ理由）。用紙を替えるときは
+  キューの種類を選び直すほうが確実です
+- 独自の名前の用紙は、**寸法が PWG の標準サイズと一致すると標準名に読み替えられます**
+  （`custom_cont10x11_254x279.4mm` → `na_10x11_10x11in`）。そのため同じ寸法の「(ミシン目回避)」用紙を
+  **用紙名では見分けられません**。余白（`media-bottom-margin`）で判断しています
+- `file://` のデバイスは、**存在する書き込み可能なディレクトリ**を指していないと拒否されます
+- `format` を設定するなら `printfile_cb` も設定すること。片方だけだと `EINVAL` になり、
+  「プリンタ名は英字で始めてください」という無関係なメッセージが出ます
+- 状態は状態ファイル（root なら `/private/var/lib/mi700pappl.state`）に保存されます。
+  古い設定が残って混乱したときは `mi700app stop --purge` で消せます
+
+#### まだ試していないこと
+
+- **実機の連続紙でのミシン目回避**（A4 の単票では印刷まで確認済み）
+- 配布（PAPPL 版は署名・公証をしておらず、ビルドした CPU 向けの実行ファイルです）
 
 ## 付属コマンド
 
@@ -889,8 +996,15 @@ LAN ボードの Web UI にも出ることがあります（うちの個体は `
 
 ```
 driver/rastertomi700.c   CUPS ラスタ -> 201PL のフィルタ（C、依存なし）
+driver/mi700enc.c        201PL の組み立て（フィルタと PAPPL 版で共用）
 driver/mkppd.py          forms.conf から Shift-JIS の PPD を生成する
 driver/build-pkg.sh      配布パッケージを作る
+driver/mkippattr.py      forms.conf から ippeveprinter の属性ファイルを生成する
+driver/mi700ipp          ippeveprinter を launchd に登録する（AirPrint 版）
+driver/mi700pappl.c      PAPPL 版のプリンタアプリケーション（pappl ブランチ）
+driver/build-pappl.sh    PAPPL 版をビルドする
+driver/mi700app          PAPPL 版を launchd に登録し、キューを作る
+contrib/mi700ippcmd      ippeveprinter から呼ばれる変換コマンド
 driver/mi700setup        キューを登録する
 driver/mi700default      キューの既定値を設定する
 driver/mi700status       SNMP でプリンタの状態を見る
