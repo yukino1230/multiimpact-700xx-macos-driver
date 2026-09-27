@@ -17,6 +17,18 @@ OUT="${MI700_OUT:-$HERE/../build/mi700pappl}"
 [ -f "$PAPPL/pappl/libpappl.a" ] || { echo "PAPPL が見つかりません: $PAPPL"; exit 1; }
 LIBS=$(sed -n 's/^LIBS[^=]*=//p' "$PAPPL/Makedefs" | head -1)
 
+# PAPPL は TLS に OpenSSL か GnuTLS を要求する(macOS の Security.framework は使えない)。
+# 既定では Homebrew の dylib にリンクされ、他の Mac に配れないので、静的な .a があれば
+# そちらを使う。これで残る依存は macOS 標準のものだけになる(otool -L で確認できる)
+SSL="${MI700_OPENSSL:-$(brew --prefix openssl@3 2>/dev/null || echo /opt/homebrew/opt/openssl@3)}"
+if [ -f "$SSL/lib/libssl.a" ] && [ -f "$SSL/lib/libcrypto.a" ]; then
+  LIBS=$(printf '%s' "$LIBS" | sed -e 's/-lssl//g' -e 's/-lcrypto//g')
+  LIBS="$LIBS $SSL/lib/libssl.a $SSL/lib/libcrypto.a"
+  echo "OpenSSL を静的にリンクします: $SSL"
+else
+  echo "警告: $SSL に静的な OpenSSL がありません。Homebrew の dylib に依存した実行ファイルになります"
+fi
+
 mkdir -p "$(dirname "$OUT")"
 clang -O2 -Wall -o "$OUT" "$HERE/mi700pappl.c" "$HERE/mi700enc.c" \
       -I "$PAPPL" $LIBS "$PAPPL/pappl/libpappl.a" \
