@@ -1,0 +1,229 @@
+#!/bin/bash
+# MultiImpact 700XX を AirPrint / IPP Everywhere のプリンタとして常駐させる(PAPPL 版)
+#
+#   mi700app add <プリンタのIP> [名前] [--port 8632] [--source 給紙口] [--perforation]
+#   mi700app list
+#   mi700app remove <名前>
+#   mi700app stop [--port 8632] [--purge]
+#
+# mi700ipp(ippeveprinter 版)との違いは次の2点:
+#   - 表示名のファイルを配れるので「ミシン目回避」などを日本語で出せる
+#   - ブラウザから設定できる画面が付く(http://localhost:<ポート>/)
+# サーバは1つで、キューは何台でも作れる。給紙口ごとに分けて名前を日本語にすると、
+# iPhone のプリンタ一覧で選ぶだけで給紙口が決まる(独自キーワードを見せずに済む)。
+#
+# sudo 付き  → LaunchDaemon(ログインしていなくても動く。印刷サーバ向け)
+# sudo なし  → LaunchAgent (このユーザーがログインしている間だけ動く)
+set -eu
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LABEL_PREFIX="io.github.yukino1230.mi700pappl"
+NAME_DEFAULT="MultiImpact 700XX"
+# 既定は 8632。8631 は mi700ipp(ippeveprinter 版)が使うので、両方を同じ Mac で
+# 動かして比べられるように番号を分けてある
+PORT_DEFAULT=8632
+
+pick() { for f in "$@"; do [ -e "$f" ] && { echo "$f"; return; }; done; echo "$1"; }
+BIN=$(pick /usr/local/libexec/mi700/mi700pappl "$HERE/../build/mi700pappl")
+FORMS=$(pick /usr/local/share/mi700/forms.conf "$HERE/../forms.conf")
+
+if [ "$(id -u)" = 0 ]; then
+  KIND=LaunchDaemon; PLISTDIR=/Library/LaunchDaemons
+  SPOOL=/private/var/spool/mi700pappl; STATE=/private/var/lib/mi700pappl.state
+  LOGDIR=/Library/Logs/mi700; DOMAIN=system
+else
+  KIND=LaunchAgent; PLISTDIR="$HOME/Library/LaunchAgents"
+  SPOOL="$HOME/Library/Application Support/mi700pappl/spool"
+  STATE="$HOME/Library/Application Support/mi700pappl.state"
+  LOGDIR="$HOME/Library/Logs/mi700"; DOMAIN="gui/$(id -u)"
+fi
+
+usage() {
+  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+# PAPPL のサーバに話しかける(MI700_FORMS はサーバと同じものを渡す)
+pappl() { MI700_FORMS="$FORMS" "$BIN" "$@"; }
+
+# 給紙口の略称 → mi700pappl のキーワード
+source_kw() {
+  case "$1" in
+    feeder|sheetfeeder|シートフィーダ)   echo "com.mi700-feeder" ;;
+    guide|sheetguide|シートガイド)       echo "com.mi700-guide" ;;
+    rear|reartractor|リアトラクタ)       echo "com.mi700-reartractor" ;;
+    front|fronttractor|フロントトラクタ) echo "com.mi700-fronttractor" ;;
+    com.mi700-*)                         echo "$1" ;;
+    *) echo "給紙口は feeder / guide / rear / front のどれかです: $1" >&2; exit 1 ;;
+  esac
+}
+
+port_of() { basename "$1" .plist | sed 's/.*\.//'; }
+
+up() {  # サーバが待ち受けているか
+  nc -z 127.0.0.1 "$1" >/dev/null 2>&1
+}
+
+cmd_list() {
+  local found=0 p port
+  for p in "$PLISTDIR/$LABEL_PREFIX".*.plist; do
+    [ -e "$p" ] || continue
+    found=1; port=$(port_of "$p")
+    if launchctl print "$DOMAIN/$(basename "$p" .plist)" >/dev/null 2>&1; then
+      echo "動作中 ポート$port  設定画面 http://localhost:$port/"
+    else
+      echo "停止   ポート$port"
+    fi
+    up "$port" && pappl printers 2>/dev/null | sed 's/^/  /' || true
+  done
+  [ $found = 1 ] || echo "登録されていません($KIND)"
+}
+
+ensure_server() {  # $1=ポート
+  local port="$1" label="$LABEL_PREFIX.$1" plist log
+  plist="$PLISTDIR/$label.plist"; log="$LOGDIR/pappl-$port.log"
+
+  # 既に動いているならそのまま使う(登録し直すとキューの追加が間に合わない)
+  if [ -e "$plist" ] && up "$port" &&
+     launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
+    echo "==> サーバは動作中です(ポート $port)"
+    return 0
+  fi
+
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 && [ ! -e "$plist" ]; then
+    echo "ポート $port は使用中です。--port で別の番号を指定してください"; exit 1
+  fi
+
+  mkdir -p "$SPOOL" "$LOGDIR" "$PLISTDIR" "$(dirname "$STATE")"
+  echo "==> $KIND を登録: $plist"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(printf '%s' "$BIN" | xml)</string>
+    <string>server</string>
+    <string>-o</string><string>server-port=$port</string>
+    <string>-o</string><string>spool-directory=$(printf '%s' "$SPOOL" | xml)</string>
+    <string>-o</string><string>log-file=$(printf '%s' "$log" | xml)</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>MI700_FORMS</key><string>$(printf '%s' "$FORMS" | xml)</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$(printf '%s' "$log" | xml)</string>
+  <key>StandardOutPath</key><string>$(printf '%s' "$log" | xml)</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$plist" >/dev/null
+
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+  # bootout の直後は launchd がまだ片付けておらず I/O error になることがある
+  local t=0
+  until launchctl bootstrap "$DOMAIN" "$plist" 2>/dev/null; do
+    t=$((t + 1))
+    [ $t -lt 5 ] || { launchctl bootstrap "$DOMAIN" "$plist"; break; }
+    sleep 1
+  done
+
+  local i=0
+  while [ $i -lt 20 ]; do
+    up "$port" && return 0
+    sleep 0.5; i=$((i + 1))
+  done
+  echo "サーバが起動しませんでした。ログを確認してください: $log"
+  tail -5 "$log" 2>/dev/null || true
+  exit 1
+}
+
+cmd_add() {
+  local ip="" name="$NAME_DEFAULT" port="$PORT_DEFAULT" src="" perf=0 model=mi700
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)        port="$2"; shift 2 ;;
+      --source)      src=$(source_kw "$2"); shift 2 ;;
+      --perforation) perf=1; shift ;;
+      -*) usage ;;
+      *) if [ -z "$ip" ]; then ip="$1"; else name="$1"; fi; shift ;;
+    esac
+  done
+  [ -n "$ip" ] || usage
+  case "$port" in ''|*[!0-9]*) echo "ポートは数字で指定してください: $port"; exit 1 ;; esac
+  [ -x "$BIN" ] || { echo "本体がありません: $BIN(driver/build-pappl.sh でビルドします)"; exit 1; }
+  [ -f "$FORMS" ] || { echo "用紙定義がありません: $FORMS"; exit 1; }
+
+  # キューの種類を決める。セット済みの用紙(と余白)はここで決まる
+  case "$src" in
+    com.mi700-reartractor|com.mi700-fronttractor)
+      if [ $perf = 1 ]; then model=mi700-perf; else model=mi700-cont; fi ;;
+    *)
+      if [ $perf = 1 ]; then
+        echo "ミシン目回避は連続紙のときだけです(--source rear か front と一緒に指定してください)"; exit 1
+      fi ;;
+  esac
+
+  nc -z -G 3 -w 3 "$ip" 9100 2>/dev/null || echo "警告: $ip:9100 に接続できません(登録は続行)"
+
+  ensure_server "$port"
+
+  if pappl printers 2>/dev/null | grep -qxF "$name"; then
+    echo "==> 既にあるので設定だけ変えます: $name"
+  else
+    echo "==> キューを追加: $name ($model)"
+    pappl add -d "$name" -v "socket://$ip:9100" -m "$model"
+  fi
+
+  # 既定の給紙口。用紙(と余白)はキューの種類で決まっているので触らない
+  if [ -n "$src" ]; then
+    pappl modify -d "$name" -o "media-source=$src"
+  fi
+
+  echo "完了しました。「${name}」として Bonjour に名乗っています。"
+  echo "  Mac:    設定 >「プリンタとスキャナ」> 追加(ドライバは自動で決まります)"
+  echo "  iPhone: 共有 > プリント で選べます"
+  echo "  設定:   http://localhost:$port/ (用紙のセット状況や既定値を変えられます)"
+  echo "  ログ:   $LOGDIR/pappl-$port.log"
+  echo "  削除:   $( [ "$KIND" = LaunchDaemon ] && echo 'sudo ')mi700app remove \"${name}\""
+}
+
+cmd_remove() {
+  local name="${1:-}"
+  [ -n "$name" ] || usage
+  pappl delete -d "$name"
+  echo "削除しました: ${name}(サーバは動いたままです。止めるには mi700app stop)"
+}
+
+cmd_stop() {
+  local port="$PORT_DEFAULT" purge=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)  port="$2"; shift 2 ;;
+      --purge) purge=1; shift ;;
+      *) usage ;;
+    esac
+  done
+  local label="$LABEL_PREFIX.$port"
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+  rm -f "$PLISTDIR/$label.plist"
+  echo "止めました: $label"
+  if [ $purge = 1 ]; then
+    rm -f "$STATE"; rm -rf "$SPOOL"
+    echo "設定(キューと用紙のセット状況)も消しました: $STATE"
+  else
+    echo "設定は $STATE に残っています(もう一度 add すれば戻ります)"
+  fi
+}
+
+case "${1:-}" in
+  add)    shift; cmd_add "$@" ;;
+  remove) shift; cmd_remove "$@" ;;
+  list)   cmd_list ;;
+  stop)   shift; cmd_stop "$@" ;;
+  *)      usage ;;
+esac
