@@ -8,16 +8,15 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
 > NEC ships no macOS driver for this printer; this one speaks 201PL (PC-PR201) directly.
 
 **現在の版は [v3.4](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v3.4)**（署名・公証済みの pkg を [Releases](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases) で配布しています）。
-**iPhone / iPad からも印刷できる試験版 [v4.0-beta1](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta1)** もあります。
-PPD を使わずに AirPrint のプリンタとして常駐させる版で、[`ipp-everywhere` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/ipp-everywhere)で開発しています。
+**iPhone / iPad からも印刷できる試験版 [v4.0-beta2](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta2)** もあります。
+PPD を使わずに AirPrint のプリンタとして常駐させる版で、[PAPPL](https://www.msweet.org/pappl/) で書いた
+プリンタアプリケーション（給紙口や用紙名が日本語で出ます）を同梱しています。開発は
+[`pappl` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/pappl)、
+詳しくは「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」。
 
-さらに先の実験として、**[PAPPL](https://www.msweet.org/pappl/) でプリンタアプリケーションを書いた版**を
-[`pappl` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/pappl)に置いています
-（給紙口やミシン目回避が日本語で出ます。詳しくは「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」）。
-
-> Current release: **v3.4**. A beta, **v4.0-beta1**, adds printing from iPhone/iPad and driverless Macs
-> by running the printer as an AirPrint (IPP Everywhere) service without a PPD (`ipp-everywhere` branch).
-> The `pappl` branch goes further with a PAPPL-based Printer Application.
+> Current release: **v3.4**. A beta, **v4.0-beta2**, adds printing from iPhone/iPad and driverless Macs
+> by running the printer as an AirPrint (IPP Everywhere) service without a PPD — including a
+> PAPPL-based Printer Application (`pappl` branch).
 
 **ドットインパクトプリンタ**は複写伝票や連続紙の印刷に今も使われていますが、
 メーカーは macOS 用のドライバを出していません。「Mac から印刷できない」
