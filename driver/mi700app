@@ -93,7 +93,12 @@ ensure_server() {  # $1=ポート
   fi
 
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 && [ ! -e "$plist" ]; then
-    echo "ポート $port は使用中です。--port で別の番号を指定してください"; exit 1
+    # 直前に止めた自分のサーバが残っていることがあるので、少しだけ待つ
+    local t=0
+    while up "$port" && [ $t -lt 10 ]; do sleep 0.5; t=$((t + 1)); done
+    if up "$port"; then
+      echo "ポート $port は使用中です。--port で別の番号を指定してください"; exit 1
+    fi
   fi
 
   mkdir -p "$SPOOL" "$LOGDIR" "$PLISTDIR" "$(dirname "$STATE")"
@@ -211,6 +216,9 @@ cmd_stop() {
   local label="$LABEL_PREFIX.$port"
   launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
   rm -f "$PLISTDIR/$label.plist"
+  # 終わるのを待つ。待たずに add し直すと「ポートが使用中」になる
+  local t=0
+  while up "$port" && [ $t -lt 20 ]; do sleep 0.5; t=$((t + 1)); done
   echo "止めました: $label"
   if [ $purge = 1 ]; then
     rm -f "$STATE"; rm -rf "$SPOOL"
