@@ -21,8 +21,6 @@
 #include <unistd.h>
 
 #define MAX_FORMS  PAPPL_MAX_MEDIA
-/* キューごとのボトム領域(印刷ダイアログには出ない。ブラウザの設定画面で選ぶ) */
-#define BOTTOM_OPT "mi700-bottom-region"
 /* 設定画面のフッタ(NULL にすると PAPPL が落ちる。main のコメント参照) */
 #define FOOTER     "<a href=\"https://github.com/yukino1230/multiimpact-700xx-macos-driver\">"\
                    "MultiImpact 700XX を macOS から使う</a>"
@@ -149,12 +147,6 @@ build_strings(void)
   papplCopyString(strings_ja,
                   "\"media-type.stationery\" = \"普通紙 (白黒)\";\n"
                   "\"media-type.photographic\" = \"写真 (グレースケール)\";\n"
-                  "\"media-type.com.mi700-perforation\" = \"ミシン目回避 (連続紙)\";\n"
-                  /* キューごとの設定(ブラウザの設定画面に出る) */
-                  "\"" BOTTOM_OPT "\" = \"ミシン目回避 (ボトム領域)\";\n"
-                  "\"" BOTTOM_OPT ".none\" = \"なし\";\n"
-                  "\"" BOTTOM_OPT ".half-inch\" = \"12.7mm (3行)\";\n"
-                  "\"" BOTTOM_OPT ".one-inch\" = \"25.4mm (6行・規格推奨)\";\n"
                   "\"media-source.com.mi700-feeder\" = \"シートフィーダ (自動吸入)\";\n"
                   "\"media-source.com.mi700-guide\" = \"シートガイド (手差し)\";\n"
                   "\"media-source.com.mi700-reartractor\" = \"リアトラクタ (連続紙)\";\n"
@@ -219,7 +211,7 @@ static const char * const SOURCES[] =
 {
   "com.mi700-feeder", "com.mi700-guide", "com.mi700-reartractor", "com.mi700-fronttractor"
 };
-static const char * const TYPES[] = { "stationery", "photographic", "com.mi700-perforation" };
+static const char * const TYPES[] = { "stationery", "photographic" };
 
 static const char *                     /* 給紙口 → mi700enc の値 */
 map_source(const char *s)
@@ -233,27 +225,6 @@ map_source(const char *s)
 
 
 /* ---- 印刷 ------------------------------------------------------------ */
-
-/* キューの設定(ブラウザの設定画面で選んだ値)を読む。
-   PAPPL はベンダーオプションをジョブの属性からしか拾わない(job-process.c)ので、
-   クライアントが送ってこないときは自分でキューの既定値を見にいく */
-static const char *
-queue_option(pappl_job_t *job, const char *name, char *buf, size_t bufsize)
-{
-  char             defname[128];        /* xxx-default */
-  ipp_t           *attrs = papplPrinterGetDriverAttributes(papplJobGetPrinter(job));
-  ipp_attribute_t *attr;
-  const char      *value;
-
-  *buf = '\0';
-  snprintf(defname, sizeof(defname), "%s-default", name);
-  if (attrs && (attr = ippFindAttribute(attrs, defname, IPP_TAG_ZERO)) != NULL &&
-      (value = ippGetString(attr, 0, NULL)) != NULL)
-    papplCopyString(buf, value, bufsize);
-  ippDelete(attrs);
-
-  return (*buf ? buf : NULL);
-}
 
 static void
 dev_write(void *ctx, const void *data, size_t len)
@@ -316,33 +287,17 @@ mi700_rstartjob(pappl_job_t *job, pappl_pr_options_t *options, pappl_device_t *d
   /* 用紙の種類で白黒かグレースケールかを決める(印刷ダイアログに出る唯一の項目) */
   ctx->bilevel     = strstr(options->media.type, "photographic") == NULL;
 
-  /* ミシン目回避(ボトム領域)は連続紙だけ。次の3つのうち大きいほうを採る:
-       - キューの設定(ブラウザの設定画面。印刷ダイアログを触らずに済む)
-       - 用紙の種類「ミシン目回避」(iPhone からも選べる)
-       - セット済みの用紙の下の余白(forms.conf の「(ミシン目回避)」の用紙) */
+  /* ミシン目回避。**実際に効いているのは用紙定義の余白**で、セット済みの用紙を
+     「(ミシン目回避)」の用紙(上下 25.4mm)にすると、クライアントが帯の外に描かなく
+     なる。本体にもボトム領域として伝えるが、こちらは宣言だけで印字は止まらない:
+     2026-10-13 に実機で確認したところ、ESC v66,06. を送っても下の帯(254〜274mm)に
+     置いた線はそのまま印字された。行送りで下端に達したときに自動改ページするための
+     設定らしく、絶対位置(ESC T/ESC F)で打つこのドライバはその判定を通らない。
+     規格どおりではあるので送るだけは送っておく(Windows のドライバも同じ形) */
   if (!strcmp(ctx->job.source, "rear") || !strcmp(ctx->job.source, "front"))
   {
-    char        buf[64];
-    const char *v = cupsGetOption(BOTTOM_OPT, options->num_vendor, options->vendor);
-    int         b = 0;
-
-    if (!v)
-      v = queue_option(job, BOTTOM_OPT, buf, sizeof buf);
-
-    if (v && !strcmp(v, "one-inch"))
-      b = 6;                            /* 6行 = 25.4mm */
-    else if (v && !strcmp(v, "half-inch"))
-      b = 3;
-    if (strstr(options->media.type, "perforation") && b < 6)
-      b = 6;
-    /* セットした用紙が下に余白を持っているなら、その分も本体に伝える
-       (forms.conf の「(ミシン目回避)」の用紙は上下 25.4mm を空けてある)。
-       用紙の名前では判別できない: 10x11インチのように PWG の標準名と寸法が
-       一致する用紙は、独自の名前を送っても標準名に読み替えられてしまう */
-    if (options->media.bottom_margin >= 1270 &&      /* 半インチ以上のときだけ */
-        bottom_lines(options->media.bottom_margin) > b)
-      b = bottom_lines(options->media.bottom_margin);
-    ctx->job.bottom = b;
+    if (options->media.bottom_margin >= 1270)   /* 下に半インチ以上空ける用紙 */
+      ctx->job.bottom = bottom_lines(options->media.bottom_margin);
   }
 
   mi700_begin(&ctx->job);
@@ -454,7 +409,6 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
              const char *device_id, pappl_pr_driver_data_t *d, ipp_t **attrs, void *data)
 {
   int i;
-  static const char * const bottoms[] = { "none", "half-inch", "one-inch" };
   /* キューの種類。連続紙のキューは既定の給紙口をリアトラクタにし、セット済みの
      用紙も連続紙にする。ミシン目回避のキューは上下 25.4mm を空けた用紙にして、
      ボトム領域も既定で送る(印刷ダイアログを何も触らずに済む) */
@@ -463,7 +417,7 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   const char *contform = perf ? "custom_cont10x11m_254x279.4mm"
                               : "custom_cont10x11_254x279.4mm";
 
-  (void)system; (void)device_uri; (void)device_id; (void)data;
+  (void)system; (void)device_uri; (void)device_id; (void)attrs; (void)data;
 
   papplCopyString(d->make_and_model, "NEC MultiImpact 700XX", sizeof(d->make_and_model));
   d->kind              = PAPPL_KIND_DOCUMENT;
@@ -527,21 +481,6 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   }
   /* 既定の給紙口。連続紙のキューはリアトラクタ(SOURCES[2]) */
   d->media_default = d->media_ready[cont ? 2 : 0];
-
-  /* キューごとの設定。印刷ダイアログには出せない(CUPS が独自の -o を捨てるのは
-     実測済み)が、ブラウザの設定画面で選べる。連続紙のキューを作って一度選んで
-     おけば、iPhone からは何も触らずにミシン目回避で印刷できる */
-  d->vendor[d->num_vendor ++] = BOTTOM_OPT;
-  if (attrs)
-  {
-    if (!*attrs)
-      *attrs = ippNew();
-    ippAddStrings(*attrs, IPP_TAG_PRINTER, IPP_CONST_TAG(IPP_TAG_KEYWORD),
-                  BOTTOM_OPT "-supported",
-                  (int)(sizeof(bottoms) / sizeof(bottoms[0])), NULL, bottoms);
-    ippAddString(*attrs, IPP_TAG_PRINTER, IPP_CONST_TAG(IPP_TAG_KEYWORD),
-                 BOTTOM_OPT "-default", NULL, perf ? "one-inch" : "none");
-  }
 
   d->rstartjob_cb  = mi700_rstartjob;
   d->rstartpage_cb = mi700_rstartpage;
