@@ -684,6 +684,26 @@ AirPrint のまま独自の機能を扱う方法は、次の2つだけでした�
 [`driver/mi700pappl.c`](driver/mi700pappl.c)（`pappl` ブランチ）がそれで、201PL の組み立ては
 CUPS フィルタと共用しています（[`driver/mi700enc.c`](driver/mi700enc.c)）。用紙は同じ `forms.conf` から読みます。
 
+#### 使い方
+
+パッケージを入れると `mi700app` と本体（`/usr/local/libexec/mi700/mi700pappl`）が入ります。
+あとは給紙口ごとにキューを作るだけです。
+
+```bash
+sudo mi700app add 192.168.1.160 "MultiImpact 700XX 単票" --source feeder
+sudo mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙" --source rear
+sudo mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙 ミシン目回避" --source front --perforation
+mi700app list
+sudo mi700app stop          # 止める(設定は残る。--purge で設定も消す)
+```
+
+- `sudo` 付きなら LaunchDaemon、なしなら LaunchAgent（`mi700ipp` と同じ）。既定のポートは 8632 です
+- 設定画面は `http://localhost:8632/`。キューごとの既定値やセット済みの用紙を変えられます。
+  同じ LAN の人も開けるので、気になる場合は `-o auth-service=other -o admin-group=admin` を
+  付けて起動するとパスワードを要求します
+
+#### 自分でビルドする
+
 ```bash
 # PAPPL を用意する（Homebrew には無いのでソースから）
 curl -LO https://github.com/michaelrsweet/pappl/releases/download/v1.4.12/pappl-1.4.12.tar.gz
@@ -691,17 +711,17 @@ tar xzf pappl-1.4.12.tar.gz
 (cd pappl-1.4.12 && ./configure --disable-shared --disable-libjpeg --disable-libpng && make)
 driver/build-pappl.sh pappl-1.4.12
 
-# 常駐させる（給紙口ごとにキューを作る）
-driver/mi700app add 192.168.1.160 "MultiImpact 700XX 単票" --source feeder
-driver/mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙" --source rear
-driver/mi700app add 192.168.1.160 "MultiImpact 700XX 連続紙 ミシン目回避" --source rear --perforation
-driver/mi700app list
+# 配布用(ユニバーサル)にするときは先にこちら。30〜60分かかるが1回で済む
+driver/build-pappl-deps.sh      # OpenSSL と PAPPL を arm64 / x86_64 の両方でビルド
+driver/build-pappl.sh           # build/deps を自動で見つけてユニバーサルにする
+driver/build-pkg.sh 4.0-beta2   # パッケージに同梱(署名・公証も同じ手順)
 ```
 
-- `sudo` 付きなら LaunchDaemon、なしなら LaunchAgent（`mi700ipp` と同じ）。既定のポートは 8632 です
-- 設定画面は `http://localhost:8632/`。キューごとの既定値やセット済みの用紙を変えられます
-- OpenSSL は静的にリンクするので、Homebrew に依存しない実行ファイルになります（PAPPL は TLS に
-  OpenSSL か GnuTLS を要求し、macOS の Security.framework は使えません）。ただしビルドした CPU 向けです
+**PAPPL は TLS に OpenSSL か GnuTLS を要求します**（macOS の Security.framework は使えません）。
+Homebrew の OpenSSL は arm64 専用なので、そのままだと Apple Silicon 専用の実行ファイルになります。
+`build-pappl-deps.sh` は OpenSSL を両アーキテクチャでビルドして `lipo` でまとめ、その上で PAPPL を
+ユニバーサルでビルドします。OpenSSL は静的にリンクするので、できた実行ファイルが依存するのは
+macOS 標準のライブラリだけです（`otool -L` で確認できます）。
 
 #### 取り戻せたもの
 

@@ -20,7 +20,8 @@ SIGN_APP="${MI700_SIGN_APP:-$(find_id 'Developer ID Application' '-p codesigning
 SIGN_PKG="${MI700_SIGN_PKG:-$(find_id 'Developer ID Installer')}"
 NOTARY="${MI700_NOTARY:-}"
 
-rm -rf "$BUILD"; mkdir -p "$ROOT" "$BUILD/scripts"
+# build/ には PAPPL やユニバーサルの部品(deps/)も置くので、消すのは作るものだけ
+rm -rf "$ROOT" "$BUILD/scripts"; mkdir -p "$ROOT" "$BUILD/scripts"
 mkdir -p "$ROOT/usr/local/libexec/cups/filter" "$ROOT/usr/local/bin" \
          "$ROOT/usr/local/share/mi700/presets" "$ROOT/usr/local/libexec/mi700" \
          "$ROOT/Library/Printers/PPDs/Contents/Resources"
@@ -38,6 +39,21 @@ if [ -n "$SIGN_APP" ]; then
   codesign --verify --strict "$FILTER"
 else
   echo "==> Developer ID Application が無いので未署名のままにします"
+fi
+
+echo "==> PAPPL 版(プリンタアプリケーション)"
+PAPPL_BIN="$ROOT/usr/local/libexec/mi700/mi700pappl"
+if MI700_OUT="$PAPPL_BIN" "$HERE/build-pappl.sh" >/dev/null 2>&1; then
+  chmod 755 "$PAPPL_BIN"
+  echo "    同梱します($(lipo -archs "$PAPPL_BIN" | tr ' ' '/'))"
+  if [ -n "$SIGN_APP" ]; then
+    codesign --force --options runtime --timestamp --sign "$SIGN_APP" "$PAPPL_BIN"
+    codesign --verify --strict "$PAPPL_BIN"
+  fi
+  install -m 755 "$HERE/mi700app" "$ROOT/usr/local/bin/mi700app"
+else
+  rm -f "$PAPPL_BIN"
+  echo "    PAPPL が用意されていないので同梱しません(driver/build-pappl-deps.sh を先に実行)"
 fi
 
 echo "==> PPD を生成"
