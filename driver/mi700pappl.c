@@ -234,6 +234,27 @@ map_source(const char *s)
 
 /* ---- 印刷 ------------------------------------------------------------ */
 
+/* キューの設定(ブラウザの設定画面で選んだ値)を読む。
+   PAPPL はベンダーオプションをジョブの属性からしか拾わない(job-process.c)ので、
+   クライアントが送ってこないときは自分でキューの既定値を見にいく */
+static const char *
+queue_option(pappl_job_t *job, const char *name, char *buf, size_t bufsize)
+{
+  char             defname[128];        /* xxx-default */
+  ipp_t           *attrs = papplPrinterGetDriverAttributes(papplJobGetPrinter(job));
+  ipp_attribute_t *attr;
+  const char      *value;
+
+  *buf = '\0';
+  snprintf(defname, sizeof(defname), "%s-default", name);
+  if (attrs && (attr = ippFindAttribute(attrs, defname, IPP_TAG_ZERO)) != NULL &&
+      (value = ippGetString(attr, 0, NULL)) != NULL)
+    papplCopyString(buf, value, bufsize);
+  ippDelete(attrs);
+
+  return (*buf ? buf : NULL);
+}
+
 static void
 dev_write(void *ctx, const void *data, size_t len)
 {
@@ -301,8 +322,12 @@ mi700_rstartjob(pappl_job_t *job, pappl_pr_options_t *options, pappl_device_t *d
        - セット済みの用紙の下の余白(forms.conf の「(ミシン目回避)」の用紙) */
   if (!strcmp(ctx->job.source, "rear") || !strcmp(ctx->job.source, "front"))
   {
+    char        buf[64];
     const char *v = cupsGetOption(BOTTOM_OPT, options->num_vendor, options->vendor);
     int         b = 0;
+
+    if (!v)
+      v = queue_option(job, BOTTOM_OPT, buf, sizeof buf);
 
     if (v && !strcmp(v, "one-inch"))
       b = 6;                            /* 6行 = 25.4mm */
