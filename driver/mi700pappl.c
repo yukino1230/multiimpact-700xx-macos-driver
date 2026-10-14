@@ -193,6 +193,40 @@ bottom_lines(int hundredths)
 }
 
 
+/* プリンタのアイコン(48/128/512 の PNG)。PAPPL が printer-icons として配り、
+   Mac と iPhone のプリンタ一覧に出る。見つからなければ PAPPL の既定の絵になる。
+   探す場所は forms.conf の隣(リポジトリから動かすとき)と、インストール先 */
+static void
+find_icons(pappl_pr_driver_data_t *d)
+{
+  static const int sizes[3] = { 48, 128, 512 };
+  const char      *env = getenv("MI700_FORMS");
+  char             dir[512] = "/usr/local/share/mi700/icons";
+  int              i;
+
+  if (env)
+  {
+    char *slash;
+    papplCopyString(dir, env, sizeof(dir));
+    if ((slash = strrchr(dir, '/')) != NULL)
+    {
+      *slash = '\0';
+      papplCopyString(dir + strlen(dir), "/driver/icons", sizeof(dir) - strlen(dir));
+      if (access(dir, R_OK))
+        papplCopyString(dir, "/usr/local/share/mi700/icons", sizeof(dir));
+    }
+  }
+
+  for (i = 0; i < 3; i ++)
+  {
+    char path[640];
+    snprintf(path, sizeof(path), "%s/icon-%d.png", dir, sizes[i]);
+    if (!access(path, R_OK))
+      papplCopyString(d->icons[i].filename, path, sizeof(d->icons[i].filename));
+  }
+}
+
+
 /* 用紙ごとの余白について。
    PAPPL が広告する media-col-database は、プリンタ全体の「上下」「左右」1組から
    作られる(printer-driver.c)。この機体の余白は左右・上下が非対称(カット紙は
@@ -481,6 +515,8 @@ mi700_driver(pappl_system_t *system, const char *driver_name, const char *device
   }
   /* 既定の給紙口。連続紙のキューはリアトラクタ(SOURCES[2]) */
   d->media_default = d->media_ready[cont ? 2 : 0];
+
+  find_icons(d);
 
   d->rstartjob_cb  = mi700_rstartjob;
   d->rstartpage_cb = mi700_rstartpage;

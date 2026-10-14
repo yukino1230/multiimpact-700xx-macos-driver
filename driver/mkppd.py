@@ -64,6 +64,8 @@ def main():
     w('*DefaultColorSpace: Gray')
     w('*FileSystem: False')
     w('*Throughput: "1"')
+    # 「プリンタとスキャナ」や印刷ダイアログに出すアイコン(Apple の拡張)
+    w('*APPrinterIconPath: "/usr/local/share/mi700/MI700XX.icns"')
     w('*cupsVersion: 2.3')
     w('*cupsModelNumber: 0')
     w('*cupsManualCopies: True')

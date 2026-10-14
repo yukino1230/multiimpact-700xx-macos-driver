@@ -369,6 +369,23 @@ sudo mi700default -p MI700_a4 給紙=シートフィーダ 用紙=A4
 mi700status <IP>
 ```
 
+### アイコン
+
+印刷ダイアログや「プリンタとスキャナ」、iPhone のプリンタ一覧に出るアイコンを同梱しています。
+実機（水平型 700 シリーズ）をデフォルメした絵で、[`tools/make_icon.py`](tools/make_icon.py) で描いています。
+
+| 経路 | 仕組み | 置き場所 |
+|---|---|---|
+| PPD | `*APPrinterIconPath` | `/usr/local/share/mi700/MI700XX.icns` |
+| PAPPL 版 | `printer-icons`（48 / 128 / 512 の PNG） | `/usr/local/share/mi700/icons/` |
+
+描き直すときは Pillow が要ります。
+
+```bash
+python3 tools/make_icon.py --all driver/icons   # PNG 3枚と .icns を作り直す
+python3 tools/make_icon.py icon.png             # 512px を1枚だけ(確認用)
+```
+
 ## 用紙を追加する
 
 `forms.conf` は次のタブ区切りです。
@@ -1070,6 +1087,7 @@ contrib/mi700ippcmd      ippeveprinter から呼ばれる変換コマンド
 driver/mi700setup        キューを登録する
 driver/mi700default      キューの既定値を設定する
 driver/mi700status       SNMP でプリンタの状態を見る
+driver/icons/            プリンタのアイコン(PNG 3種と .icns)
 forms.conf               用紙定義
 tools/mi700print         UTF-8 テキストを ESC K + JIS で印刷する
 tools/pdf2mi700          PDF/PS を Ghostscript 経由で変換する（CUPS を通さない旧経路）
@@ -1077,6 +1095,7 @@ tools/mi700decode        .prn を PBM に戻す（紙を使わずに検証でき
 tools/mi700align         印字位置の確認パターンを作る
 tools/mi700diff          キャプチャ同士を比較する
 tools/mi700preset        キャプチャをプリセットとして登録する
+tools/make_icon.py       アイコンを描く(Pillow が要る)
 ```
 
 `tools/` の使い方は[付属コマンド](#付属コマンド)にあります。

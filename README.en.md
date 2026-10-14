@@ -370,6 +370,24 @@ Creating them from System Settings is fine too; set the defaults afterwards.
 mi700status <IP>
 ```
 
+### The icon
+
+An icon is bundled for the print dialog, Printers & Scanners and the iPhone printer list. It is a
+stylized drawing of the real machine (the horizontal 700 series), drawn by
+[`tools/make_icon.py`](tools/make_icon.py).
+
+| Path | Mechanism | Location |
+|---|---|---|
+| PPD | `*APPrinterIconPath` | `/usr/local/share/mi700/MI700XX.icns` |
+| PAPPL version | `printer-icons` (48 / 128 / 512 PNG) | `/usr/local/share/mi700/icons/` |
+
+Redrawing it needs Pillow:
+
+```bash
+python3 tools/make_icon.py --all driver/icons   # regenerate the three PNGs and the .icns
+python3 tools/make_icon.py icon.png             # just a 512px preview
+```
+
 ## Adding paper sizes
 
 `forms.conf` is tab separated:
@@ -1107,6 +1125,7 @@ contrib/mi700ippcmd      the conversion command ippeveprinter calls
 driver/mi700setup        registers a queue
 driver/mi700default      sets queue defaults
 driver/mi700status       reads printer status over SNMP
+driver/icons/            the printer icon (three PNGs and an .icns)
 forms.conf               paper definitions
 tools/mi700print         prints UTF-8 text with ESC K + JIS
 tools/pdf2mi700          converts PDF/PS through Ghostscript (the legacy, non-CUPS route)
@@ -1114,6 +1133,7 @@ tools/mi700decode        turns a .prn back into PBM (verification without paper)
 tools/mi700align         builds the print-position test pattern
 tools/mi700diff          compares two captures
 tools/mi700preset        registers a capture as a preset
+tools/make_icon.py       draws the icon (needs Pillow)
 ```
 
 How to use `tools/` is in [Bundled commands](#bundled-commands).

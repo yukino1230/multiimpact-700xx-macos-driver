@@ -58,13 +58,20 @@ fi
 
 echo "==> PPD を生成"
 MI700_FORMS=~/Developer/mi700/forms.conf python3 "$HERE/mkppd.py" > "$BUILD/MI700XX.ppd"
-# ビルド時はフィルタがまだ /usr/local に無いので、その指摘だけ除外して判定する
-if cupstestppd "$BUILD/MI700XX.ppd" 2>&1 | grep -E "FAIL|失敗" | grep -v "rastertomi700"; then
+# ビルド時はフィルタとアイコンがまだ /usr/local に無いので、その指摘だけ除外して判定する
+if cupstestppd "$BUILD/MI700XX.ppd" 2>&1 | grep -E "FAIL|失敗" | grep -vE "rastertomi700|APPrinterIconPath"; then
   echo "PPD に問題があります"; exit 1
 fi
 install -m 644 "$BUILD/MI700XX.ppd" "$ROOT/usr/local/share/mi700/MI700XX.ppd"
 gzip -c "$BUILD/MI700XX.ppd" > "$ROOT/Library/Printers/PPDs/Contents/Resources/MI700XX.ppd.gz"
 chmod 644 "$ROOT/Library/Printers/PPDs/Contents/Resources/MI700XX.ppd.gz"
+
+echo "==> アイコンを配置"
+mkdir -p "$ROOT/usr/local/share/mi700/icons"
+install -m 644 "$HERE/icons/MI700XX.icns" "$ROOT/usr/local/share/mi700/MI700XX.icns"
+for i in 48 128 512; do
+  install -m 644 "$HERE/icons/icon-$i.png" "$ROOT/usr/local/share/mi700/icons/icon-$i.png"
+done
 
 echo "==> 付属ツールを配置"
 install -m 644 ~/Developer/mi700/forms.conf "$ROOT/usr/local/share/mi700/forms.conf"
