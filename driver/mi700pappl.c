@@ -209,12 +209,12 @@ find_icons(pappl_pr_driver_data_t *d)
     char *slash;
     papplCopyString(dir, env, sizeof(dir));
     if ((slash = strrchr(dir, '/')) != NULL)
-    {
-      *slash = '\0';
-      papplCopyString(dir + strlen(dir), "/driver/icons", sizeof(dir) - strlen(dir));
-      if (access(dir, R_OK))
-        papplCopyString(dir, "/usr/local/share/mi700/icons", sizeof(dir));
-    }
+      *slash = '\0';                    /* forms.conf の置き場所 */
+    else
+      papplCopyString(dir, ".", sizeof(dir));
+    papplCopyString(dir + strlen(dir), "/driver/icons", sizeof(dir) - strlen(dir));
+    if (access(dir, R_OK))              /* リポジトリ内に無ければ入れた先を見る */
+      papplCopyString(dir, "/usr/local/share/mi700/icons", sizeof(dir));
   }
 
   for (i = 0; i < 3; i ++)
@@ -364,6 +364,9 @@ mi700_rstartpage(pappl_job_t *job, pappl_pr_options_t *options, pappl_device_t *
   /* 用紙の長さ(ポイント)。ラスタの高さではなく media の長さを使う */
   page_pt = (unsigned)(options->media.size_length * 72.0 / 2540.0 + 0.5);
   mi700_page_begin(&ctx->job, ctx->height, options->header.HWResolution[1], page_pt);
+  if (page == 0 && !ctx->job.lines)
+    papplLogJob(job, PAPPL_LOGLEVEL_WARN,
+                "用紙長が範囲外なので送っていません(本体の設定で判断されます)");
   papplLogJob(job, PAPPL_LOGLEVEL_DEBUG, "ページ%u: %ux%u ドット %udpi 用紙長=%d",
               page + 1, ctx->width, ctx->height, options->header.HWResolution[1], ctx->job.lines);
   return (true);

@@ -156,8 +156,8 @@ void mi700_page_begin(mi700_job_t *j, unsigned page_dots, unsigned vdpi, unsigne
         double plen = page_pt ? (double)page_pt / 72.0 * 120.0
                               : (double)page_dots / vdpi * 120.0;
         int v = (int)(plen + 0.5) + 300;
-        if (v >= 1 && v <= 9999) putf(j, "\034" "05v%04d", v);
-        j->lines = v;
+        if (v >= 1 && v <= 9999) { putf(j, "\034" "05v%04d", v); j->lines = v; }
+        else                     j->lines = 0;   /* 送れなかったことを呼び出し側に伝える */
     } else {                                          /* 連続紙は簡易VFU(行数) */
         /* カット紙と同じく**用紙の長さ**から出す。ミシン目回避の用紙は
            上下25.4mmずつ印字不可なので、ラスタの高さだと2インチ短くなり

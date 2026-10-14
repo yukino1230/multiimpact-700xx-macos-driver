@@ -43,7 +43,7 @@ fi
 
 echo "==> PAPPL 版(プリンタアプリケーション)"
 PAPPL_BIN="$ROOT/usr/local/libexec/mi700/mi700pappl"
-if MI700_OUT="$PAPPL_BIN" "$HERE/build-pappl.sh" >/dev/null 2>&1; then
+if MI700_OUT="$PAPPL_BIN" "$HERE/build-pappl.sh" > "$BUILD/build-pappl.log" 2>&1; then
   chmod 755 "$PAPPL_BIN"
   echo "    同梱します($(lipo -archs "$PAPPL_BIN" | tr ' ' '/'))"
   if [ -n "$SIGN_APP" ]; then
@@ -53,7 +53,8 @@ if MI700_OUT="$PAPPL_BIN" "$HERE/build-pappl.sh" >/dev/null 2>&1; then
   install -m 755 "$HERE/mi700app" "$ROOT/usr/local/bin/mi700app"
 else
   rm -f "$PAPPL_BIN"
-  echo "    PAPPL が用意されていないので同梱しません(driver/build-pappl-deps.sh を先に実行)"
+  echo "    PAPPL 版は同梱しません。理由は $BUILD/build-pappl.log:"
+  tail -3 "$BUILD/build-pappl.log" | sed "s/^/      /"
 fi
 
 echo "==> PPD を生成"

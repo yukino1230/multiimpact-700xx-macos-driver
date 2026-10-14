@@ -3,7 +3,7 @@
 #
 #   mi700app add <プリンタのIP> [名前] [--port 8632] [--source 給紙口] [--perforation]
 #   mi700app list
-#   mi700app remove <名前>
+#   mi700app remove <名前> [--port 8632]
 #   mi700app stop [--port 8632] [--purge]
 #
 # mi700ipp(ippeveprinter 版)との違いは次の2点:
@@ -198,8 +198,18 @@ cmd_add() {
 }
 
 cmd_remove() {
-  local name="${1:-}"
+  local name="" port="$PORT_DEFAULT"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      -*) usage ;;
+      *) name="$1"; shift ;;
+    esac
+  done
   [ -n "$name" ] || usage
+  # サーバが動いていないまま PAPPL のコマンドを呼ぶと、PAPPL が勝手に
+  # private-server を起こしてそのまま返ってこない
+  up "$port" || { echo "サーバが動いていません(mi700app list で確認してください)"; exit 1; }
   pappl delete -d "$name"
   echo "削除しました: ${name}(サーバは動いたままです。止めるには mi700app stop)"
 }

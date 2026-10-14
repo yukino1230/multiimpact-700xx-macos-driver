@@ -493,9 +493,12 @@ int main(int argc, char *argv[]) {
     page:
 
         mi700_page_begin(&job, h, vdpi, pgh);
-        if (pages == 0)
+        if (pages == 0) {
             logmsg("DEBUG", "source=%s eject=%s quality=%s bottom=%d %udpi lines=%d",
                    job.source, job.eject, job.quality, job.bottom, vdpi, job.lines);
+            if (!job.lines)
+                logmsg("WARNING", "用紙長が範囲外なので送りません(本体の設定で判断されます)");
+        }
         logmsg("DEBUG", "ページ%d: %ux%u ドット", pages + 1, w, h);
         /* CUPS ラスタ(cgpdftoraster)は印字可能範囲ぶんしか無いのでずらし戻す。
            PWG Raster(IPP Everywhere)はページ全体がラスタになっていて、
