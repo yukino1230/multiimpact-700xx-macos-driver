@@ -1,5 +1,7 @@
 # MultiImpact 700XX を macOS から使う
 
+*English version: [README.en.md](README.en.md)*
+
 NEC のドットインパクトプリンタ **MultiImpact 700XX** 用の CUPS ドライバです。
 NEC は本機の macOS 用ドライバを提供していないため、201PL（PC-PR201 系）の制御コードを
 直接組み立てる CUPS フィルタを書きました。アプリの印刷ダイアログからそのまま印刷できます。
@@ -832,7 +834,9 @@ PPD 版の `MI700Bottom` も同じで、宣言はしますが印字は止まり�
 
 #### まだ試していないこと
 
-- 配布（PAPPL 版は署名・公証をしておらず、ビルドした CPU 向けの実行ファイルです）
+- **Intel Mac**。v4.0-beta2 からユニバーサル（arm64 + x86_64）でビルドしていますが、
+  動かしているのは Apple Silicon だけです
+- 700XX 以外の 201PL 機での PAPPL 版
 
 ## 付属コマンド
 
