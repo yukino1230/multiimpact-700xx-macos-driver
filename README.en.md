@@ -11,9 +11,8 @@ You print from the ordinary print dialog of any app.
 There is also **[v4.0-beta2](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta2),
 a beta that prints from iPhone / iPad as well.** It runs the printer as an AirPrint service without a PPD and
 bundles a Printer Application written with [PAPPL](https://www.msweet.org/pappl/) (paper sources and media names
-show up in Japanese). Development happens on the
-[`pappl` branch](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/pappl); see
-"[A Printer Application built with PAPPL](#a-printer-application-built-with-pappl-pappl-branch)".
+show up in Japanese). See
+"[A Printer Application built with PAPPL](#a-printer-application-built-with-pappl)".
 
 **Dot-matrix printers** are still used for multi-part forms and continuous paper, but the manufacturers
 do not ship macOS drivers. This is for people who gave up with "it can't print from a Mac" or
@@ -649,7 +648,7 @@ the driver (PPD) — which works through the same `mi700ipp` server as long as t
 
 **Both of these are solved by serving the strings file yourself.** `ippeveprinter` cannot, but a
 Printer Application written with PAPPL can (see
-"[A Printer Application built with PAPPL](#a-printer-application-built-with-pappl-pappl-branch)").
+"[A Printer Application built with PAPPL](#a-printer-application-built-with-pappl)").
 
 #### About the claim that "an app can add vendor settings to AirPrint"
 
@@ -690,11 +689,11 @@ chosen.
   ready in the attribute file, A4 was the only size the iPhone offered. All sizes are listed now
 - Black text arrives as gray value 69 (see "bi-level / grayscale" above)
 
-### A Printer Application built with PAPPL (`pappl` branch)
+### A Printer Application built with PAPPL
 
 What `ippeveprinter` lacks — it cannot serve a strings file and cannot hold per-queue settings — is
 covered by writing your own Printer Application with **[PAPPL](https://www.msweet.org/pappl/)**.
-That is [`driver/mi700pappl.c`](driver/mi700pappl.c) (on the `pappl` branch); the 201PL assembly is
+That is [`driver/mi700pappl.c`](driver/mi700pappl.c); the 201PL assembly is
 shared with the CUPS filter ([`driver/mi700enc.c`](driver/mi700enc.c)) and the paper sizes come from
 the same `forms.conf`.
 
@@ -1101,7 +1100,7 @@ driver/mkppd.py          generates the Shift-JIS PPD from forms.conf
 driver/build-pkg.sh      builds the distribution package
 driver/mkippattr.py      generates the ippeveprinter attribute file from forms.conf
 driver/mi700ipp          registers ippeveprinter with launchd (the AirPrint route)
-driver/mi700pappl.c      the PAPPL Printer Application (pappl branch)
+driver/mi700pappl.c      the PAPPL Printer Application
 driver/build-pappl.sh    builds the PAPPL version
 driver/mi700app          registers the PAPPL version with launchd and creates queues
 contrib/mi700ippcmd      the conversion command ippeveprinter calls

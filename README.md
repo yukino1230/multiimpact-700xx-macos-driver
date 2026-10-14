@@ -12,13 +12,12 @@ NEC は本機の macOS 用ドライバを提供していないため、201PL（P
 **現在の版は [v3.4](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v3.4)**（署名・公証済みの pkg を [Releases](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases) で配布しています）。
 **iPhone / iPad からも印刷できる試験版 [v4.0-beta2](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta2)** もあります。
 PPD を使わずに AirPrint のプリンタとして常駐させる版で、[PAPPL](https://www.msweet.org/pappl/) で書いた
-プリンタアプリケーション（給紙口や用紙名が日本語で出ます）を同梱しています。開発は
-[`pappl` ブランチ](https://github.com/yukino1230/multiimpact-700xx-macos-driver/tree/pappl)、
-詳しくは「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」。
+プリンタアプリケーション（給紙口や用紙名が日本語で出ます）を同梱しています。
+詳しくは「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーション)」。
 
 > Current release: **v3.4**. A beta, **v4.0-beta2**, adds printing from iPhone/iPad and driverless Macs
 > by running the printer as an AirPrint (IPP Everywhere) service without a PPD — including a
-> PAPPL-based Printer Application (`pappl` branch).
+> PAPPL-based Printer Application.
 
 **ドットインパクトプリンタ**は複写伝票や連続紙の印刷に今も使われていますが、
 メーカーは macOS 用のドライバを出していません。「Mac から印刷できない」
@@ -639,7 +638,7 @@ AirPrint でも見せています。同じ方法を試しました。
 
 **この2つは、表示名のファイルを自分で配れば解決します。** `ippeveprinter` では配れませんが、
 PAPPL で自前のプリンタアプリケーションを書くと配れます（下の
-「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーションpappl-ブランチ)」）。
+「[PAPPL で作ったプリンタアプリケーション](#pappl-で作ったプリンタアプリケーション)」）。
 
 #### 「アプリを入れれば AirPrint のまま独自の設定が出せる」という説明について
 
@@ -678,11 +677,11 @@ AirPrint のまま独自の機能を扱う方法は、次の2つだけでした�
   セット済みにしていたら、iPhone では A4 しか出てきませんでした。全用紙を載せています
 - 黒い文字は値 69 のグレーで届きます（上の「白黒 / グレースケール」を参照）
 
-### PAPPL で作ったプリンタアプリケーション（`pappl` ブランチ）
+### PAPPL で作ったプリンタアプリケーション
 
 `ippeveprinter` で足りないところ（表示名のファイルを配れない・キューごとの設定を持てない）は、
 **[PAPPL](https://www.msweet.org/pappl/)** で自前のプリンタアプリケーションを書くと埋まります。
-[`driver/mi700pappl.c`](driver/mi700pappl.c)（`pappl` ブランチ）がそれで、201PL の組み立ては
+[`driver/mi700pappl.c`](driver/mi700pappl.c) がそれで、201PL の組み立ては
 CUPS フィルタと共用しています（[`driver/mi700enc.c`](driver/mi700enc.c)）。用紙は同じ `forms.conf` から読みます。
 
 #### 使い方
@@ -1064,7 +1063,7 @@ driver/mkppd.py          forms.conf から Shift-JIS の PPD を生成する
 driver/build-pkg.sh      配布パッケージを作る
 driver/mkippattr.py      forms.conf から ippeveprinter の属性ファイルを生成する
 driver/mi700ipp          ippeveprinter を launchd に登録する（AirPrint 版）
-driver/mi700pappl.c      PAPPL 版のプリンタアプリケーション（pappl ブランチ）
+driver/mi700pappl.c      PAPPL 版のプリンタアプリケーション
 driver/build-pappl.sh    PAPPL 版をビルドする
 driver/mi700app          PAPPL 版を launchd に登録し、キューを作る
 contrib/mi700ippcmd      ippeveprinter から呼ばれる変換コマンド
