@@ -884,7 +884,7 @@ multi-part forms can still only be printed on an impact printer, so the fit is j
 filled in and copied on the spot.
 
 **If you would use it, say so in an
-[issue](https://github.com/yukino1230/multiimpact-700xx-macos-driver/issues).** Mentioning your
+[issue #1](https://github.com/yukino1230/multiimpact-700xx-macos-driver/issues/1) (a 👍 is enough).** Mentioning your
 printer (make and model) and the kind of form you print helps. If there is demand, I will build it.
 
 #### Not tried yet

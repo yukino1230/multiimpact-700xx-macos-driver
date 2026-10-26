@@ -859,7 +859,7 @@ PPD 版の `MI700Bottom` も同じで、宣言はしますが印字は止まり�
 ドットインパクトでしか刷れないので、現場で書いて即複写という業務には合うはずです。
 
 **「あったら使う」という方は
-[Issue](https://github.com/yukino1230/multiimpact-700xx-macos-driver/issues) で教えてください。**
+[Issue #1](https://github.com/yukino1230/multiimpact-700xx-macos-driver/issues/1) で教えてください（👍 だけでも助かります）。**
 使う機種（メーカー・型番）と、刷りたい伝票の種類も書いてもらえると助かります。需要が見えたら作ります。
 
 #### まだ試していないこと
