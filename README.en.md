@@ -872,6 +872,21 @@ version: it declares the region but does not stop printing (when you need perfor
 pick the "(ミシン目回避)" paper size). Sending it is still correct per the specification, so it is
 still sent.
 
+#### Would you use an app that prints straight from iOS?
+
+This route works by making one Mac look like an AirPrint printer, but an iPhone or iPad can just as
+well **open port 9100 on the printer and send 201PL directly** — no Mac and no driver involved.
+
+The idea is an app where you **photograph a pre-printed form, place the fields on it, save that as a
+template, fill it in and print** (the alignment work `mi700align` does, done on screen). Adding ESC/P
+(Epson's VP series) would cover almost every dot-matrix printer still in use in Japan. Carbon-copy
+multi-part forms can still only be printed on an impact printer, so the fit is jobs where a slip is
+filled in and copied on the spot.
+
+**If you would use it, say so in an
+[issue](https://github.com/yukino1230/multiimpact-700xx-macos-driver/issues).** Mentioning your
+printer (make and model) and the kind of form you print helps. If there is demand, I will build it.
+
 #### Not tried yet
 
 - **An Intel Mac.** The binaries are universal (arm64 + x86_64) from v4.0-beta2 on, but everything has
