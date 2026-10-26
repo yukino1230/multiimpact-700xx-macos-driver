@@ -6,12 +6,11 @@ A CUPS driver for the NEC **MultiImpact 700XX** dot-matrix printer. NEC ships no
 this machine, so this is a CUPS filter that builds 201PL (PC-PR201 family) control codes directly.
 You print from the ordinary print dialog of any app.
 
-**The current release is [v3.4](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v3.4)**
+**The current release is [v4.0](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0)**
 (signed and notarized packages are on the [Releases](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases) page).
-There is also **[v4.0-beta2](https://github.com/yukino1230/multiimpact-700xx-macos-driver/releases/tag/v4.0-beta2),
-a beta that prints from iPhone / iPad as well.** It runs the printer as an AirPrint service without a PPD and
-bundles a Printer Application written with [PAPPL](https://www.msweet.org/pappl/) (paper sources and media names
-show up in Japanese). See
+**It prints from iPhone / iPad and driverless Macs too**: it can run the printer as an AirPrint service
+without a PPD, using a bundled Printer Application written with
+[PAPPL](https://www.msweet.org/pappl/) (paper sources and media names show up in Japanese). See
 "[A Printer Application built with PAPPL](#a-printer-application-built-with-pappl)".
 
 **Dot-matrix printers** are still used for multi-part forms and continuous paper, but the manufacturers
@@ -25,7 +24,7 @@ do not ship macOS drivers. This is for people who gave up with "it can't print f
   CUPS raster → 201PL conversion is written in C. No Ghostscript, no libcups
 - **Paper sizes live in one text file.** Add a line to `forms.conf` and you have a new size
 - **Printer status reaches the print queue.** Out of paper or cover open is shown with a reason
-- **It prints from an iPhone too (beta v4.0-beta2).** The printer is published as an AirPrint service;
+- **It prints from an iPhone too.** The printer is published as an AirPrint service;
   see "[Where to go when PPDs stop working](#where-to-go-when-ppds-stop-working)"
 
 ## Supported printers
@@ -221,15 +220,15 @@ A pre-built package is included in the repository, so you can install it as is.
 ```bash
 git clone https://github.com/yukino1230/multiimpact-700xx-macos-driver.git
 cd multiimpact-700xx-macos-driver
-sudo installer -pkg dist/mi700-3.4.pkg -target /
+sudo installer -pkg dist/mi700-4.0.pkg -target /
 sudo mi700setup <printer IP>
 ```
 
 To build it yourself (also what you do after editing `forms.conf`):
 
 ```bash
-./driver/build-pkg.sh 3.4
-sudo installer -pkg build/mi700-3.4.pkg -target /
+./driver/build-pkg.sh 4.0
+sudo installer -pkg build/mi700-4.0.pkg -target /
 ```
 
 ### Signing and notarization (for redistribution)
@@ -241,7 +240,7 @@ To notarize as well, store the `notarytool` credentials in the keychain once:
 
 ```bash
 xcrun notarytool store-credentials mi700 --apple-id <Apple ID> --team-id <Team ID>
-MI700_NOTARY=mi700 ./driver/build-pkg.sh 3.4
+MI700_NOTARY=mi700 ./driver/build-pkg.sh 4.0
 ```
 
 That signs the filter with the Hardened Runtime, signs the pkg, notarizes it and runs
@@ -283,7 +282,7 @@ The package is **signed with a Developer ID and notarized by Apple**. Downloadin
 double-clicking is enough. To check:
 
 ```bash
-spctl -a -vvv -t install mi700-3.4.pkg
+spctl -a -vvv -t install mi700-4.0.pkg
 # "accepted / source=Notarized Developer ID" means it is fine
 ```
 
@@ -746,7 +745,7 @@ driver/build-pappl.sh pappl-1.4.12
 # For a universal build for distribution, do this first. 30-60 minutes, once
 driver/build-pappl-deps.sh      # builds OpenSSL and PAPPL for both arm64 and x86_64
 driver/build-pappl.sh           # finds build/deps automatically and goes universal
-driver/build-pkg.sh 4.0-beta2   # bundles it in the package (signing and notarization as usual)
+driver/build-pkg.sh 4.0         # bundles it in the package (signing and notarization as usual)
 ```
 
 **PAPPL requires OpenSSL or GnuTLS for TLS** (the macOS Security.framework is not an option).
